@@ -667,17 +667,22 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
-	/** One request to the current model outside the conversation, so memory text never enters the session. */
-	const askModel = (ctx: ExtensionContext, signal?: AbortSignal) => async (system: string, user: string): Promise<string | undefined> => {
-		const model = ctx.model;
-		if (!model) throw new Error("no model is selected");
-		const timeout = AbortSignal.timeout(120_000);
+	/**
+	 * One request to a model outside the conversation, so memory text never enters the session. The
+	 * model is the one the person agreed to when asked, not whatever is selected later. A failed
+	 * request keeps its reason (a rate limit, a sign-in problem) instead of looking like silence.
+	 */
+	const askModel = (ctx: ExtensionContext, model: NonNullable<ExtensionContext["model"]>, signal: AbortSignal) => async (system: string, user: string): Promise<string | undefined> => {
 		const reply = await ctx.modelRegistry
-			.streamSimple(model, { systemPrompt: system, messages: [{ role: "user", content: user, timestamp: Date.now() }] }, { signal: signal ? AbortSignal.any([signal, timeout]) : timeout })
+			.streamSimple(model, { systemPrompt: system, messages: [{ role: "user", content: user, timestamp: Date.now() }] }, { signal: AbortSignal.any([signal, AbortSignal.timeout(120_000)]) })
 			.result();
-		if (reply.stopReason === "error" || reply.stopReason === "aborted") return undefined;
+		if (reply.stopReason === "error") throw new Error(reply.errorMessage || "the model returned an error");
+		if (reply.stopReason === "aborted") throw new Error(signal.aborted ? "cancelled" : "the request timed out");
 		return reply.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("").trim() || undefined;
 	};
+
+	/** Memories /memory-compact already tried this session, so a second run reaches the ones it has not. */
+	const triedIds = new Set<number>();
 
 	pi.registerCommand("memory-compact", {
 		description: "Shorten long memories with the model, checked so nothing is lost (/memory-compact [ids | project name | all])",
@@ -711,60 +716,105 @@ export default function (pi: ExtensionAPI) {
 				return ctx.ui.notify(`/memory-compact: ${(err as Error).message}`, "error");
 			}
 			const explicit = ids.length > 0;
+			if (rest.length > 0 && explicit) ctx.ui.notify(`/memory-compact: ignoring "${rest.join(" ")}" because ids were given`, "info");
 			// Without ids, "long" means over write.warnChars; at 0 (the check is off) nothing counts as long.
 			if (!explicit && settings.write.warnChars <= 0) return ctx.ui.notify("/memory-compact has no length to go by: write.warnChars is 0. Give it ids, or set write.warnChars.", "info");
-			const limit = explicit ? rows.length : settings.compact.maxPerRun;
-			const picked = pickLong(rows, explicit ? 0 : settings.write.warnChars, limit);
+			// Summaries are not shortened (they are never recalled), whoever asks. Memories that hold a
+			// secret are not sent anywhere: a model provider would see it.
+			const named = explicit ? rows.filter((r) => r.kind === "summary") : [];
+			if (named.length) ctx.ui.notify(`Summaries are not shortened: ${named.map((r) => `#${r.id}`).join(", ")} skipped`, "info");
+			const withSecrets = rows.filter((r) => r.kind !== "summary" && findSecrets(r.text).length > 0);
+			if (withSecrets.length) ctx.ui.notify(`Not sent to the model, because they look like they hold a secret: ${withSecrets.map((r) => `#${r.id}`).join(", ")}. Remove the secret first.`, "warning");
+			const eligible = rows.filter((r) => !withSecrets.includes(r));
+			// Memories this command already looked at and could not shorten come last, so running it again
+			// reaches the ones it has not tried, not the same refused ones.
+			const tried = triedIds;
+			const ordered = [...eligible].sort((a, b) => Number(tried.has(a.id)) - Number(tried.has(b.id)));
+			const limit = explicit ? ordered.length : settings.compact.maxPerRun;
+			const longEnough = explicit ? 0 : settings.write.warnChars;
+			const all = pickLong(ordered, longEnough, Number.MAX_SAFE_INTEGER);
+			const fresh = all.filter((c) => !tried.has(c.row.id));
+			const picked = explicit ? all : [...fresh, ...all.filter((c) => tried.has(c.row.id))].slice(0, limit);
 			if (picked.length === 0) return ctx.ui.notify(`Nothing to shorten in ${where}: no memory is over ${settings.write.warnChars} characters.`, "info");
-			const more = explicit ? 0 : pickLong(rows, settings.write.warnChars, Number.MAX_SAFE_INTEGER).length - picked.length;
+			const more = explicit ? 0 : all.length - picked.length;
 			const est = estimate(picked);
-			const model = ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "";
+			const model = ctx.model;
 			if (!model) return ctx.ui.notify("/memory-compact needs a model: select one first", "error");
+			const modelName = `${model.provider}/${model.id}`;
+			const spread = [...new Set(picked.map((c) => c.row.scope))];
 			const ok = await ctx.ui.confirm(
 				`Shorten ${picked.length} ${picked.length === 1 ? "memory" : "memories"} in ${where}?`,
-				`${picked.length} requests to ${model}, about ${compactChars(est.inputTokens)} tokens in and ${compactChars(est.outputTokens)} out. Nothing leaves your conversation, and nothing is saved until you have seen the results and confirmed.${more > 0 ? ` ${more} more are over the limit; run it again for them.` : ""}`,
+				`This sends the text of ${picked.length === 1 ? "this memory" : `these ${picked.length} memories`} to ${modelName}, in ${picked.length} separate request${picked.length === 1 ? "" : "s"} of about ${compactChars(est.inputTokens)} tokens in all (${compactChars(est.outputTokens)} back). ` +
+					`It is not part of your conversation and nothing is saved until you have seen the results and confirmed.${spread.length > 1 ? ` The memories come from ${spread.length} projects (${spread.slice(0, 4).map((x) => x.replace(/^project:/, "")).join(", ")}${spread.length > 4 ? ", ..." : ""}), and all of them go to the same model.` : ""}` +
+					`${more > 0 ? ` ${more} more are over the limit; run it again for them.` : ""} A snapshot of the database is taken before anything is written, and Esc cancels.`,
 			);
 			if (!ok) return;
 
+			// Esc, or any key that cancels, stops the run; requests already finished are still shown.
 			const controller = new AbortController();
-			ctx.ui.setStatus("memory-compact", `shortening 0/${picked.length}`);
+			const stopListening = ctx.ui.onTerminalInput((data) => {
+				if (data === "\u001b") controller.abort();
+				return undefined;
+			});
+			ctx.ui.setStatus("memory-compact", `shortening 0/${picked.length} (Esc cancels)`);
 			let outcomes;
 			try {
-				outcomes = await proposeAll(askModel(ctx, controller.signal), picked, {
+				outcomes = await proposeAll(askModel(ctx, model, controller.signal), picked, {
 					target: Math.min(300, settings.recall.inlineChars),
 					hardCap: Math.max(settings.recall.inlineChars + 100, 450),
 					concurrency: settings.compact.concurrency,
 					signal: controller.signal,
-					onProgress: (d, t) => ctx.ui.setStatus("memory-compact", `shortening ${d}/${t}`),
+					onProgress: (d, t) => ctx.ui.setStatus("memory-compact", `shortening ${d}/${t} (Esc cancels)`),
 				});
 			} finally {
+				stopListening();
 				ctx.ui.setStatus("memory-compact", undefined);
 			}
+			for (const o of outcomes) triedIds.add(o.row.id);
+			if (controller.signal.aborted) ctx.ui.notify(`Memory compact: cancelled after ${outcomes.length} of ${picked.length}`, "info");
+			if (outcomes.length === 0) return;
 			const good = outcomes.filter((o) => o.proposal && o.problems.length === 0);
 			const refused = outcomes.filter((o) => o.problems.length > 0);
 			const summary = `${good.length} ready, ${refused.length} refused or failed`;
+			const failures = [...new Set(outcomes.filter((o) => !o.proposal).map((o) => o.problems[0]))];
 			if (good.length === 0) {
-				await ctx.ui.select(`Memory compact: nothing can be applied (${summary})`, outcomes.map(line).concat("Close"));
+				await ctx.ui.select(`Memory compact: nothing can be applied (${summary})${failures.length ? `\nReasons: ${failures.join("; ")}` : ""}\n\n${outcomes.map(line).join("\n")}`, ["Close"]);
 				return;
 			}
 			const was = good.reduce((n, o) => n + o.row.text.length, 0);
 			const now = good.reduce((n, o) => n + o.proposal!.text.length, 0);
 			const added = good.reduce((n, o) => n + o.proposal!.splits.length, 0);
-			const choice = await ctx.ui.select(
-				`Memory compact: ${summary}. Applying the ${good.length} ready ones takes ${compactChars(was)} characters to ${compactChars(now)} and adds ${added} new ${added === 1 ? "memory" : "memories"}.\n\n${outcomes.map(line).join("\n")}`,
-				[`Apply ${good.length}`, "Show one before and after", "Cancel"],
-			);
-			if (choice === "Show one before and after") {
-				const o = good[0]!;
-				const pick = await ctx.ui.select(`#${o.row.id}\n\nBEFORE (${o.row.text.length}c):\n${o.row.text}\n\nAFTER (${o.proposal!.text.length}c):\n${o.proposal!.text}${o.proposal!.splits.map((x) => `\n\nNEW (${x.kind ?? o.row.kind}):\n${x.text}`).join("")}`, [`Apply ${good.length}`, "Cancel"]);
-				if (pick !== `Apply ${good.length}`) return;
-			} else if (choice !== `Apply ${good.length}`) return;
+			const apply1 = `Apply ${good.length}`;
+			// Every proposal can be read before anything is written: the model's text is untrusted, since
+			// the memory it was given may itself say anything. First the one-line summary of all of them,
+			// with the choice to read them one at a time.
+			const head = `Memory compact: ${summary}. Applying the ${good.length} ready ones takes ${compactChars(was)} characters to ${compactChars(now)} and adds ${added} new ${added === 1 ? "memory" : "memories"}.\n\n${outcomes.map(line).join("\n")}`;
+			let decision = await ctx.ui.select(head, [apply1, "Read each one first", "Cancel"]);
+			if (decision === "Read each one first") {
+				decision = undefined;
+				for (const [i, o] of good.entries()) {
+					const detail = `#${o.row.id} ${o.row.scope.replace(/^project:/, "")} (${i + 1}/${good.length})\n\nBEFORE (${o.row.text.length}c):\n${o.row.text}\n\nAFTER (${o.proposal!.text.length}c):\n${o.proposal!.text}${o.proposal!.splits.map((x) => `\n\nNEW (${x.kind ?? o.row.kind}, ${x.text.length}c):\n${x.text}`).join("")}`;
+					const last = i === good.length - 1;
+					const pick = await ctx.ui.select(detail, last ? [apply1, "Cancel"] : [`Next (${i + 2}/${good.length})`, apply1, "Cancel"]);
+					if (pick === apply1) { decision = apply1; break; }
+					if (pick === undefined || pick === "Cancel") break;
+				}
+			}
+			if (decision !== apply1) return;
 
+			// A snapshot first: a shortened memory cannot be undone memory by memory, but /memory-restore can undo the run.
+			let snapshot = "";
+			try {
+				snapshot = backupDb(location().path, backupDirFor(location()), new Date(), settings.backup.keep).to;
+			} catch (err) {
+				const go = await ctx.ui.confirm("The snapshot failed", `${(err as Error).message}\n\nShortening cannot be undone without one. Go on anyway?`);
+				if (!go) return;
+			}
 			const r = apply(s, good, ctx.sessionManager.getSessionId() ?? null);
 			side.touched = side.touched.map((x) => s.get(x.id) ?? x);
 			sidebar?.refresh();
 			ctx.ui.notify(
-				`Memory compact: shortened ${r.updated}, added ${r.added}${refused.length ? `, left ${refused.length} unchanged` : ""}${r.skipped.length ? `, skipped ${r.skipped.map((k) => `#${k.id} (${k.why})`).join(", ")}` : ""}.`,
+				`Memory compact: shortened ${r.updated}, added ${r.added}${refused.length ? `, left ${refused.length} unchanged` : ""}${r.skipped.length ? `, skipped ${r.skipped.map((k) => `#${k.id} (${k.why})`).join(", ")}` : ""}.${snapshot ? ` Undo with /memory-restore ${snapshot.split("/").pop()}.` : ""}`,
 				"info",
 			);
 		},

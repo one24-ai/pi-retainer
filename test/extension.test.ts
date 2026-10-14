@@ -60,7 +60,7 @@ function fakePi() {
 		cwd: dir,
 		hasUI: true,
 		isIdle: () => true,
-		ui: { notify: (m: string) => notes.push(m), confirm: async () => true, select: async () => undefined, setStatus: () => {} },
+		ui: { notify: (m: string) => notes.push(m), confirm: async () => true, select: async () => undefined, setStatus: () => {}, onTerminalInput: () => () => {} },
 		model: { provider: "test", id: "fake-model" },
 		modelRegistry: { streamSimple: () => ({ result: async () => ({ stopReason: "stop", content: [{ type: "text", text: "{}" }] }) }) },
 		sessionManager: sm,
@@ -812,8 +812,9 @@ test("/memory-compact: asks once, shows the results, applies the ready ones, and
 
 	assert.equal(calls.length, 2, "one request per long memory");
 	assert.match(asked[0]!.title, /Shorten 2 memories/);
-	assert.match(asked[0]!.message, /2 requests to test\/fake-model/);
-	assert.match(asked[0]!.message, /Nothing leaves your conversation/);
+	assert.match(asked[0]!.message, /sends the text of these 2 memories to test\/fake-model, in 2 separate requests/);
+	assert.match(asked[0]!.message, /not part of your conversation/);
+	assert.match(asked[0]!.message, /snapshot of the database is taken before anything is written/);
 	assert.match(summary, /2 ready, 0 refused or failed/);
 	assert.match(summary, new RegExp(`#${a.id} \\d+c -> \\d+c \\+ \\d+ new`));
 	const after = new MemoryStore(process.env.PI_RETAINER_DB!);
@@ -926,7 +927,7 @@ test("/memory-compact caps a run at compact.maxPerRun and says how many are left
 	let message = "";
 	f.ctx.ui.confirm = async (_t: string, m: string) => ((message = m), false);
 	await f.commands.get("memory-compact").handler("", f.ctx);
-	assert.match(message, /2 requests/);
+	assert.match(message, /in 2 separate requests/);
 	assert.match(message, /2 more are over the limit; run it again for them/);
 });
 
@@ -965,4 +966,151 @@ test("with write.warnChars at 0, /memory-compact without ids does nothing; with 
 	await f.commands.get("memory-compact").handler(String(a.id), f.ctx);
 	assert.match(titles[0]!, /Shorten 1 memory in #/);
 	assert.equal(calls.length, 0, "declined at the question: no request was made");
+});
+
+// ------------------------------------------------------------ /memory-compact: review fixes
+
+test("a snapshot is taken before anything is written, and the notice says how to undo", async () => {
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	const a = s.write({ scope: scopeOf(), kind: "fact", text: longMemory("Alpha") }).row;
+	s.close();
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	fakeModel(f);
+	f.ctx.ui.select = async (_t: string, opts: string[]) => opts[0];
+	const { readdirSync } = await import("node:fs");
+	const before = readdirSync(join(dir, "backups")).filter((n) => n.startsWith("retainer-")).length;
+	await f.commands.get("memory-compact").handler("", f.ctx);
+	const names = readdirSync(join(dir, "backups")).filter((n) => n.startsWith("retainer-"));
+	assert.equal(names.length, before + 1);
+	const snap = new MemoryStore(join(dir, "backups", names.sort().at(-1)!));
+	assert.equal(snap.get(a.id)!.text, longMemory("Alpha"), "the snapshot holds the text from before the change");
+	snap.close();
+	assert.ok(f.notes.some((n) => /Undo with \/memory-restore retainer-\d{8}-\d{6}(?:-\d+)?\.db/.test(n)), f.notes.join(" | "));
+});
+
+test("a failed request says why, instead of 'no answer'", async () => {
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	s.write({ scope: scopeOf(), kind: "fact", text: longMemory("Alpha") });
+	s.close();
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	f.ctx.modelRegistry.streamSimple = () => ({ result: async () => ({ stopReason: "error", errorMessage: "429 rate limit exceeded", content: [] }) });
+	let shown = "";
+	f.ctx.ui.select = async (t: string, opts: string[]) => ((shown = t), opts[0]);
+	await f.commands.get("memory-compact").handler("", f.ctx);
+	assert.match(shown, /nothing can be applied/);
+	assert.match(shown, /429 rate limit exceeded/);
+});
+
+test("Esc during a run cancels it; what finished is still shown and nothing is written without a confirmation", async () => {
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	for (const h of ["Alpha", "Beta", "Gamma", "Delta"]) s.write({ scope: scopeOf(), kind: "fact", text: longMemory(h) });
+	s.close();
+	writeFileSync(join(dir, "pi-retainer.json"), JSON.stringify({ compact: { concurrency: 1 } }));
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	let listener: ((d: string) => unknown) | undefined;
+	f.ctx.ui.onTerminalInput = (fn: (d: string) => unknown) => ((listener = fn), () => (listener = undefined));
+	const good = fakeModel(f);
+	const stream = f.ctx.modelRegistry.streamSimple;
+	let n = 0;
+	f.ctx.modelRegistry.streamSimple = (m: unknown, c: any) => (++n === 2 ? (listener?.("\u001b"), stream(m, c)) : stream(m, c));
+	let shown = "";
+	f.ctx.ui.select = async (t: string, opts: string[]) => ((shown = t), opts[opts.length - 1]); // Cancel
+	await f.commands.get("memory-compact").handler("", f.ctx);
+	assert.ok(good.length < 4, `${good.length} requests: it stopped early`);
+	assert.ok(f.notes.some((n) => /cancelled after \d of 4/.test(n)), f.notes.join(" | "));
+	assert.equal(listener, undefined, "the key listener is removed");
+	const check = new MemoryStore(process.env.PI_RETAINER_DB!);
+	assert.equal(check.inScopes([scopeOf()]).filter((r) => r.text.length > 800).length, 4, "nothing was changed");
+	check.close();
+});
+
+test("every ready proposal can be read before applying, one by one", async () => {
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	for (const h of ["Alpha", "Beta", "Gamma"]) s.write({ scope: scopeOf(), kind: "fact", text: longMemory(h) });
+	s.close();
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	fakeModel(f);
+	const seen: string[] = [];
+	f.ctx.ui.select = async (t: string, opts: string[]) => {
+		seen.push(t);
+		if (opts.includes("Read each one first")) return "Read each one first";
+		if (opts[0]?.startsWith("Next")) return opts[0];
+		return "Cancel"; // after reading the last one
+	};
+	await f.commands.get("memory-compact").handler("", f.ctx);
+	const details = seen.filter((t) => /BEFORE \(/.test(t));
+	assert.equal(details.length, 3, "all three proposals were shown, not just the first");
+	assert.ok(details.every((t, i) => t.includes(`(${i + 1}/3)`) && /AFTER \(/.test(t) && /NEW \(/.test(t)));
+	const check = new MemoryStore(process.env.PI_RETAINER_DB!);
+	assert.equal(check.inScopes([scopeOf()]).filter((r) => r.text.length > 800).length, 3, "cancelling after reading writes nothing");
+	check.close();
+});
+
+test("memories that hold a secret are never sent to the model, and summaries are not shortened", async () => {
+	const key = ["AKIA", "IOSFODNN7EXAMPLE"].join("");
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	const clean = s.write({ scope: scopeOf(), kind: "fact", text: longMemory("Clean") }).row;
+	const leaky = s.write({ scope: scopeOf(), kind: "fact", text: `${longMemory("Leaky")} The key is ${key}.` }).row;
+	const summary = s.write({ scope: scopeOf(), kind: "summary", text: longMemory("Summary") }).row;
+	s.close();
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	const sent: string[] = [];
+	f.ctx.modelRegistry.streamSimple = (_m: unknown, c: any) => ({ result: async () => (sent.push(c.messages[0].content), { stopReason: "stop", content: [{ type: "text", text: "{}" }] }) });
+	f.ctx.ui.confirm = async () => true;
+	f.ctx.ui.select = async (_t: string, opts: string[]) => opts[opts.length - 1];
+	await f.commands.get("memory-compact").handler(`${clean.id} ${leaky.id} ${summary.id}`, f.ctx);
+	assert.equal(sent.length, 1, "only the clean memory was sent");
+	assert.ok(!sent.some((m) => m.includes(key)), "the secret never reached the model");
+	assert.ok(f.notes.some((n) => new RegExp(`Not sent to the model.*#${leaky.id}`).test(n)));
+	assert.ok(f.notes.some((n) => new RegExp(`Summaries are not shortened: #${summary.id}`).test(n)));
+});
+
+test("running it again reaches the memories it has not tried, not the same refused ones", async () => {
+	writeFileSync(join(dir, "pi-retainer.json"), JSON.stringify({ compact: { maxPerRun: 2 } }));
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	const rows = ["Alpha", "Beta", "Gamma", "Delta"].map((h, i) => s.write({ scope: scopeOf(), kind: "fact", text: longMemory(h).padEnd(1200 + i * 100, "x") }).row);
+	s.close();
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	const asked: string[][] = [];
+	f.ctx.modelRegistry.streamSimple = (_m: unknown, c: any) => ({ result: async () => (asked.at(-1)!.push(c.messages[0].content.split("\n\n")[1].slice(0, 6)), { stopReason: "stop", content: [{ type: "text", text: '{"text":"Nope.","splits":[]}' }] }) });
+	f.ctx.ui.confirm = async () => (asked.push([]), true);
+	f.ctx.ui.select = async (_t: string, opts: string[]) => opts[opts.length - 1];
+	await f.commands.get("memory-compact").handler("", f.ctx);
+	await f.commands.get("memory-compact").handler("", f.ctx);
+	const first = new Set(asked[0]);
+	const second = new Set(asked[1]);
+	assert.equal(first.size + second.size, 4, "the second run took the other two");
+	for (const x of second) assert.ok(!first.has(x));
+	void rows;
+});
+
+test("the request goes to the model the person agreed to, even if another is selected meanwhile", async () => {
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	s.write({ scope: scopeOf(), kind: "fact", text: longMemory("Alpha") });
+	s.close();
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	const used: string[] = [];
+	f.ctx.modelRegistry.streamSimple = (m: any) => ({ result: async () => (used.push(m.id), { stopReason: "stop", content: [{ type: "text", text: "{}" }] }) });
+	f.ctx.ui.confirm = async () => ((f.ctx.model = { provider: "other", id: "different-model" }), true);
+	f.ctx.ui.select = async (_t: string, opts: string[]) => opts[opts.length - 1];
+	await f.commands.get("memory-compact").handler("", f.ctx);
+	assert.deepEqual(used, ["fake-model"]);
+});
+
+test("ids given with other words: the words are ignored and the person is told", async () => {
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	const a = s.write({ scope: scopeOf(), kind: "fact", text: longMemory("Alpha") }).row;
+	s.close();
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	f.ctx.ui.confirm = async () => false;
+	await f.commands.get("memory-compact").handler(`all ${a.id} extra`, f.ctx);
+	assert.ok(f.notes.some((n) => /ignoring "all extra" because ids were given/.test(n)), f.notes.join(" | "));
 });

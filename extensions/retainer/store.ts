@@ -268,6 +268,27 @@ export class MemoryStore {
 		}
 	}
 
+	/** Run `fn` as one unit: everything it writes happens, or none of it does (it rethrows). */
+	transaction<T>(fn: () => T): T {
+		this.db.exec("BEGIN IMMEDIATE"); // takes the write lock, waiting up to busy_timeout
+		try {
+			const out = fn();
+			this.db.exec("COMMIT");
+			return out;
+		} catch (err) {
+			try {
+				this.db.exec("ROLLBACK");
+			} catch {}
+			throw err;
+		}
+	}
+
+	/** The memory in `scope` whose text matches `text` once case and spacing are ignored, if any. */
+	findSame(scope: string, text: string): MemoryRow | undefined {
+		const raw = this.db.prepare("SELECT * FROM memories WHERE scope = ? AND norm_hash = ?").get(scope, hashText(text)) as Record<string, unknown> | undefined;
+		return raw ? toRow(raw) : undefined;
+	}
+
 	/**
 	 * Insert a memory, or refresh the existing one when the same scope already
 	 * holds text that normalises identically. Re-stating a fact should bump its

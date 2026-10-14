@@ -6,15 +6,18 @@
  * Free of pi imports so it can be tested on its own.
  */
 
-import { judge, type Proposal } from "./compact.ts";
+import { judge, maxSplits, type Proposal } from "./compact.ts";
 import { type Ask, propose } from "./shorten.ts";
 import type { MemoryKind, MemoryRow } from "./store.ts";
 
 export interface CompactStore {
 	get(id: number): MemoryRow | undefined;
 	update(id: number, patch: { text?: string }): MemoryRow | undefined;
-	write(input: { scope: string; kind: MemoryKind; text: string; tags?: string[]; sessionId?: string | null }): { row: MemoryRow; deduplicated: boolean };
+	write(input: { scope: string; kind: MemoryKind; text: string; tags?: string[]; pinned?: boolean; sessionId?: string | null }): { row: MemoryRow; deduplicated: boolean };
+	findSame(scope: string, text: string): MemoryRow | undefined;
+	transaction<T>(fn: () => T): T;
 }
+
 
 export interface Candidate {
 	row: MemoryRow;
@@ -83,8 +86,11 @@ export interface Applied {
 }
 
 /**
- * Write the proposals that passed. A memory that changed since it was read is left alone, so a
- * rewrite never overwrites an edit made while the model was working.
+ * Write the proposals that passed, each as one unit: the shorter text and its split-off notes are
+ * saved together or not at all, so a failure part way never leaves a memory shortened with its
+ * detail missing. A memory that changed since it was read (its text, scope, kind, pin or tags) is
+ * left alone, so a rewrite never overwrites an edit made while the model was working. A split that
+ * says what some memory already says is not written, and that memory is not touched.
  */
 export function apply(store: CompactStore, outcomes: Outcome[], sessionId: string | null): Applied {
 	const out: Applied = { updated: 0, added: 0, skipped: [] };
@@ -92,21 +98,30 @@ export function apply(store: CompactStore, outcomes: Outcome[], sessionId: strin
 		if (!o.proposal || o.problems.length > 0) continue;
 		const now = store.get(o.row.id);
 		if (!now) { out.skipped.push({ id: o.row.id, why: "it was deleted meanwhile" }); continue; }
-		if (now.text !== o.row.text) { out.skipped.push({ id: o.row.id, why: "it changed meanwhile" }); continue; }
+		const moved = now.text !== o.row.text || now.scope !== o.row.scope || now.kind !== o.row.kind || now.pinned !== o.row.pinned || now.tags.join("\u0000") !== o.row.tags.join("\u0000");
+		if (moved) { out.skipped.push({ id: o.row.id, why: "it changed meanwhile" }); continue; }
+		// The check already refuses too many notes; if one gets here, skip it rather than drop notes.
+		const splits = o.proposal.splits;
+		if (splits.length > maxSplits(o.row.text.length)) { out.skipped.push({ id: o.row.id, why: `it has ${splits.length} notes, too many` }); continue; }
 		try {
-			store.update(o.row.id, { text: o.proposal.text });
+			let added = 0;
+			store.transaction(() => {
+				store.update(o.row.id, { text: o.proposal!.text });
+				for (const sp of splits) {
+					// A kind the model names must be one that memories may have and that recall lists; "summary"
+					// is not (summaries are never recalled), so it becomes a fact. No kind: the source's kind.
+					const named = sp.kind as string | undefined;
+					const kind: MemoryKind = named === undefined ? (now.kind === "summary" ? "fact" : now.kind) : named === "decision" || named === "preference" || named === "gotcha" ? named : "fact";
+					if (store.findSame(now.scope, sp.text)) continue; // said already: leave that memory as it is
+					// A shortened pinned memory keeps its detail in recall: its notes are pinned too.
+					store.write({ scope: now.scope, kind, text: sp.text, tags: now.tags, pinned: now.pinned, sessionId });
+					added++;
+				}
+			});
 			out.updated++;
+			out.added += added;
 		} catch (err) {
 			out.skipped.push({ id: o.row.id, why: (err as Error).message });
-			continue;
-		}
-		for (const sp of o.proposal.splits) {
-			// A kind the model names must be one that memories may have and that recall lists; "summary"
-			// is not (summaries are never recalled), so it becomes a fact. No kind: the source's kind.
-			const named = sp.kind as string | undefined;
-			const kind: MemoryKind = named === undefined ? (o.row.kind === "summary" ? "fact" : o.row.kind) : named === "decision" || named === "preference" || named === "gotcha" ? named : "fact";
-			const w = store.write({ scope: o.row.scope, kind, text: sp.text, tags: o.row.tags, sessionId });
-			if (!w.deduplicated) out.added++;
 		}
 	}
 	return out;

@@ -81,3 +81,30 @@ test("propose: asks with the rules, reports a failed or malformed answer instead
 test("the prompt tells the model the rules that the check enforces", () => {
 	for (const word of ["Never drop a fact", "identifier", "quotation marks", "JSON", "long dashes"]) assert.ok(SYSTEM_PROMPT.includes(word), word);
 });
+
+test("identifiers are matched as whole tokens: a longer number, id, version or path does not stand in for a shorter one", () => {
+	const miss = (a: string, b: string) => lost(a, b).missing;
+	assert.deepEqual(miss("see #12", "see #123"), ["#12"]);
+	assert.deepEqual(miss("took 100 ms", "took 1100 ms"), ["100 ms"]);
+	assert.deepEqual(miss("took 5 ms", "took 50 ms"), ["5 ms"]);
+	assert.deepEqual(miss("at v1.2.3", "at v1.2.30"), ["v1.2.3"]);
+	assert.deepEqual(miss("version 1.2", "version 1.2.3"), ["1.2"]);
+	// but the same token with punctuation round it, or a space in a unit, is the same token
+	assert.deepEqual(miss("see #12", "(see #12), and more"), []);
+	assert.deepEqual(miss("at v1.2.3", "ends at v1.2.3."), []);
+	assert.deepEqual(miss("took 30 min", "took 30min"), []);
+	assert.deepEqual(miss("backs off 1/2/4/8/10 min", "backs off 1/2/4/8/10 min"), []);
+});
+
+test("short identifiers and more shapes are found: #1, 5%, two-part versions, ports, flags, emails, Windows paths, code names", () => {
+	const ids = identifiers("Issue #1 got 5% faster on version 1.2, port 5433, use -f or --force, mail zach@one24.ai, file C:\\Users\\zach\\x.txt, call getUser and footerSegments.hostname and agentConfig.modelSetId.");
+	for (const want of ["#1", "5%", "1.2", "5433", "-f", "--force", "zach@one24.ai", "C:\\Users\\zach\\x.txt", "getUser", "footerSegments.hostname", "agentConfig.modelSetId"]) assert.ok(ids.includes(want), `${want} in ${ids.join(" | ")}`);
+	assert.deepEqual(identifiers("Use and/or TCP/IP. It works.Then no. e.g. fine, read/write, yes/no."), []);
+});
+
+test("matching a long text is fast", () => {
+	const t0 = Date.now();
+	const big = ("Run `tool --flag` in ~/git/app/x.ts, see https://example.com/a/b/c and #12 on 2026-10-02 v1.2.3 getUser() " + "word ".repeat(40)).repeat(150);
+	lost(big, big.slice(0, 5000));
+	assert.ok(Date.now() - t0 < 1500, `${Date.now() - t0} ms`);
+});
