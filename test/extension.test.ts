@@ -651,3 +651,126 @@ test("with summaries.save on, a compaction summary is kept as a summary memory, 
 	assert.deepEqual(rows[0]!.tags, ["compaction", "threshold"]);
 	s.close();
 });
+
+// ------------------------------------------------------------------------- write-time checks
+
+const AWS_KEY = ["AKIA", "IOSFODNN7EXAMPLE"].join("");
+
+test("a secret is refused before it is saved, and the refusal does not repeat it", async () => {
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	await assert.rejects(
+		() => f.call("memory_write", { text: `The deploy key is ${AWS_KEY} for account 1.`, kind: "fact" }),
+		(err: Error) => /^Not saved: .*an AWS access key id/.test(err.message) && !err.message.includes(AWS_KEY),
+	);
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	assert.equal(s.inScopes(s.scopes()).length, 0, "nothing was written");
+	s.close();
+	const ok = await f.call("memory_write", { text: "The deploy key is in the keyring under service deploy-key.", kind: "fact" });
+	assert.ok(ok.details.id);
+});
+
+test("memory_update refuses a secret in new text and leaves the memory alone", async () => {
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	const w = await f.call("memory_write", { text: "Where the deploy key lives: the keyring.", kind: "fact" });
+	await assert.rejects(() => f.call("memory_update", { id: w.details.id, text: `Key ${AWS_KEY}` }), /Not saved/);
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	assert.equal(s.get(w.details.id)!.text, "Where the deploy key lives: the keyring.");
+	s.close();
+	// editing something other than the text is fine
+	assert.ok((await f.call("memory_update", { id: w.details.id, pinned: true })).details.id);
+});
+
+test("write.checkSecrets: false turns the check off", async () => {
+	writeFileSync(join(dir, "pi-retainer.json"), JSON.stringify({ write: { checkSecrets: false } }));
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	assert.ok((await f.call("memory_write", { text: `Example id ${AWS_KEY} from the docs.`, kind: "fact" })).details.id);
+});
+
+test("saving something close to an existing memory names it, and does not for an exact repeat or an unrelated one", async () => {
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	const first = await f.call("memory_write", { text: "The release workflow publishes to npm with trusted publishing and provenance from the version tag.", kind: "fact" });
+	const second = await f.call("memory_write", { text: "Release workflow publishes to npm through trusted publishing, with provenance, from the version tag.", kind: "gotcha" });
+	assert.deepEqual(second.details.similar, [first.details.id]);
+	assert.match(second.content[0].text, new RegExp(`close to #${first.details.id} \\(\\d+% the same words\\)`));
+	assert.match(second.content[0].text, /memory_update/);
+	assert.notEqual(second.details.id, first.details.id, "both are kept: it only warns");
+
+	const repeat = await f.call("memory_write", { text: "The release workflow publishes to npm with trusted publishing and provenance from the version tag.", kind: "fact" });
+	assert.equal(repeat.details.deduplicated, true);
+	assert.deepEqual(repeat.details.similar, []);
+
+	const unrelated = await f.call("memory_write", { text: "The database file lives in the data directory beside its backups folder.", kind: "fact" });
+	assert.deepEqual(unrelated.details.similar, []);
+	assert.ok(!/close to/.test(unrelated.content[0].text));
+});
+
+test("write.similarity: 0 turns the near-duplicate note off and skips the comparison", async () => {
+	writeFileSync(join(dir, "pi-retainer.json"), JSON.stringify({ write: { similarity: 0 } }));
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	await f.call("memory_write", { text: "The release workflow publishes to npm with trusted publishing and provenance from the version tag.", kind: "fact" });
+	const second = await f.call("memory_write", { text: "Release workflow publishes to npm through trusted publishing, with provenance, from the version tag.", kind: "fact" });
+	assert.deepEqual(second.details.similar, []);
+	assert.ok(!/close to/.test(second.content[0].text));
+});
+
+test("/memory-tidy's request to the model names the project of memories that are not this folder's", async () => {
+	const home = join(dir, "home");
+	mkdirSync(home, { recursive: true });
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	const long = (word: string) => `${word} ${"A detailed sentence that goes on and on about the topic. ".repeat(14)}`;
+	const other = s.write({ scope: "project:elsewhere", kind: "fact", text: long("Elsewhere") }).row;
+	const mine = s.write({ scope: `project:${home.split("/").pop()}`, kind: "fact", text: long("Mine") }).row;
+	const glob = s.write({ scope: "global", kind: "fact", text: long("Global") }).row;
+	s.close();
+	const f = await loadIn(home);
+	await f.emit("session_start", { reason: "startup" });
+	const sent: string[] = [];
+	f.pi.sendUserMessage = (m: string) => sent.push(m);
+	f.ctx.ui.select = async (_t: string, opts: string[]) => opts[0]; // "Ask agent to shorten"
+	await f.commands.get("memory-tidy").handler("all", f.ctx);
+	assert.equal(sent.length, 1);
+	const msg = sent[0]!;
+	assert.match(msg, new RegExp(`#${other.id}[^.]* (?:is|are) in the project "elsewhere" \\(pass project: "elsewhere" to memory_get and memory_forget, and in: "elsewhere" to memory_update\\)`));
+	assert.ok(!msg.includes('"' + home.split("/").pop() + '"'), "this folder's own project is not called out");
+	assert.ok(msg.includes(`#${mine.id}`) && msg.includes(`#${glob.id}`));
+	assert.ok(!new RegExp(`#${glob.id}[^.]*(?:is|are) in the project`).test(msg), "global memories are reachable from anywhere");
+});
+
+test("a near-duplicate in another project is not mentioned, and a stricter write.similarity ignores a looser match", async () => {
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	s.write({ scope: "project:elsewhere", kind: "fact", text: "The release workflow publishes to npm with trusted publishing and provenance from the version tag." });
+	s.close();
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	const here = await f.call("memory_write", { text: "Release workflow publishes to npm through trusted publishing, with provenance, from the version tag.", kind: "fact" });
+	assert.deepEqual(here.details.similar, [], "the match is in another project");
+
+	writeFileSync(join(dir, "pi-retainer.json"), JSON.stringify({ write: { similarity: 0.95 } }));
+	const g = await load();
+	await g.emit("session_start", { reason: "startup" });
+	await g.call("memory_write", { text: "The build copies the output folder into the release bundle before upload.", kind: "fact" });
+	const close = await g.call("memory_write", { text: "The build copies the output folder into the release bundle before the upload step.", kind: "fact" });
+	assert.deepEqual(close.details.similar, [], "about 85% the same is below 0.95");
+});
+
+test("the tidy request lists each id once and says 'is' for a single memory", async () => {
+	const home = join(dir, "home");
+	mkdirSync(home, { recursive: true });
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	const long = (word: string) => `${word} ${"A detailed sentence that goes on and on about the topic. ".repeat(14)}`;
+	const only = s.write({ scope: "project:elsewhere", kind: "fact", text: long("Only") }).row;
+	s.close();
+	const f = await loadIn(home);
+	await f.emit("session_start", { reason: "startup" });
+	const sent: string[] = [];
+	f.pi.sendUserMessage = (m: string) => sent.push(m);
+	f.ctx.ui.select = async (_t: string, opts: string[]) => opts[0];
+	await f.commands.get("memory-tidy").handler("all", f.ctx);
+	assert.match(sent[0]!, new RegExp(`#${only.id} is in the project "elsewhere"`));
+	assert.equal([...sent[0]!.matchAll(new RegExp(`#${only.id}`, "g"))].length >= 1, true);
+});

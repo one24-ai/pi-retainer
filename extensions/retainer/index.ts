@@ -22,13 +22,14 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { autoBackup, backupDb } from "./backup.ts";
 import { buildDigest } from "./digest.ts";
-import { compactChars, formatRow, formatSearchRow, lengthNote, memories } from "./format.ts";
+import { compactChars, formatRow, formatSearchRow, lengthNote, memories, similarNote } from "./format.ts";
 import { chassisLoaded, markPlainMessage, offerToolRows, registerSidebar, type SidebarState } from "./chassis.ts";
 import { backupDirFor, type DbLocation, resolveDb } from "./paths.ts";
 import { recallRenderer } from "./recall-row.ts";
 import { findSnapshot, listSnapshots, restoreSnapshot, snapshotLabel } from "./restore.ts";
 import { defaultRepoRoots, findRepos, GLOBAL_SCOPE, isInGitRepo, resolveProject, resolveProjectScope, resolveReadScopes } from "./scope.ts";
 import { findMisfiled } from "./misfiled.ts";
+import { findSecrets, secretRefusal } from "./secrets.ts";
 import { DEFAULT_SETTINGS, loadSettings, type RecallSettings, settingsPath } from "./settings.ts";
 import { MEMORY_KINDS, type MemoryKind, type MemoryRow, MemoryStore } from "./store.ts";
 
@@ -195,8 +196,15 @@ export default function (pi: ExtensionAPI) {
 		// Writes share the connection; one at a time keeps the duplicate check honest.
 		executionMode: "sequential",
 		async execute(_id, params, _signal, _onUpdate, ctx) {
+			// Checked before anything is written, and the text is never echoed back.
+			if (settings.write.checkSecrets) {
+				const found = findSecrets(params.text);
+				if (found.length > 0) throw new Error(secretRefusal(found));
+			}
+			const scope = writeScope(ctx, params.global, params.project);
+			const existing = settings.write.similarity > 0 ? openStore().similarTo(scope, params.text, { threshold: settings.write.similarity }) : [];
 			const result = openStore().write({
-				scope: writeScope(ctx, params.global, params.project),
+				scope,
 				kind: params.kind as MemoryKind,
 				text: params.text,
 				tags: params.tags,
@@ -205,11 +213,13 @@ export default function (pi: ExtensionAPI) {
 			});
 			touch(result.row);
 			const lenNote = lengthNote(params.text, settings.write.warnChars, settings.recall.inlineChars);
-			const note = lenNote + whereNote(ctx, result.row.scope);
+			// An exact repeat was refreshed, not added, so there is nothing to warn about.
+			const similar = result.deduplicated ? [] : existing.filter((x) => x.row.id !== result.row.id);
+			const note = lenNote + similarNote(similar) + whereNote(ctx, result.row.scope);
 			const verb = result.deduplicated ? "Refreshed existing memory" : "Saved memory";
 			return {
 				content: [{ type: "text", text: `${verb} ${formatRow(result.row)}${note}` }],
-				details: { id: result.row.id, scope: result.row.scope, deduplicated: result.deduplicated, long: lenNote !== "" },
+				details: { id: result.row.id, scope: result.row.scope, deduplicated: result.deduplicated, long: lenNote !== "", similar: similar.map((x) => x.row.id) },
 			};
 		},
 	});
@@ -236,6 +246,10 @@ export default function (pi: ExtensionAPI) {
 			// "project" moves the memory; "in" only says where it is now, so reaching a memory in
 			// another project never relocates it by accident.
 			if (params.global !== undefined && params.project) throw new Error("pass either global or project, not both");
+			if (params.text && settings.write.checkSecrets) {
+				const found = findSecrets(params.text);
+				if (found.length > 0) throw new Error(secretRefusal(found));
+			}
 			const row = readable(ctx, params.id, params.in ?? params.project);
 			const moveTo = params.global === true ? GLOBAL_SCOPE : params.project ? projectScope(ctx, params.project) : params.global === false ? resolveProjectScope(ctx.cwd) : undefined;
 			const updated = openStore().update(params.id, {
@@ -662,7 +676,18 @@ export default function (pi: ExtensionAPI) {
 				sidebar?.refresh();
 			}
 			if (sent === 0) return;
-			// Rewritten text needs the model.
+			// Rewritten text needs the model. Memories can be in a project other than this folder's, so
+			// say where each one is: without that the model cannot read or change them from here.
+			const homeOf = (id: number) => s.get(id)?.scope.replace(/^project:/, "") ?? "";
+			const folderProject = resolveProjectScope(ctx.cwd).replace(/^project:/, "");
+			const projectNote = (ids: number[]) => {
+				const out = new Map<string, number[]>();
+				for (const id of [...new Set(ids)]) {
+					const p = homeOf(id);
+					if (p && p !== folderProject && s.get(id)?.scope !== GLOBAL_SCOPE) out.set(p, [...(out.get(p) ?? []), id]);
+				}
+				return [...out].map(([p, list]) => `${list.map((i) => `#${i}`).join(", ")} ${list.length === 1 ? "is" : "are"} in the project "${p}" (pass project: "${p}" to memory_get and memory_forget, and in: "${p}" to memory_update)`).join("; ");
+			};
 			const asks: string[] = [];
 			if (merges.length) {
 				asks.push(
@@ -676,6 +701,8 @@ export default function (pi: ExtensionAPI) {
 						`under ${settings.recall.inlineChars} characters where possible; split unrelated points into new memories with memory_write. Use memory_update to rewrite.`,
 				);
 			}
+			const elsewhere = projectNote([...shorten, ...merges.flatMap((m) => [...m.matchAll(/#(\d+)/g)].map((x) => Number(x[1])))]);
+			if (elsewhere) asks.push(`Note: ${elsewhere}.`);
 			const msg = `From /memory-tidy: ${asks.join(" ")} Show me the new text when done.`;
 			if (ctx.isIdle()) pi.sendUserMessage(msg);
 			else pi.sendUserMessage(msg, { deliverAs: "followUp" });
