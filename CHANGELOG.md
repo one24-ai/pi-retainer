@@ -4,6 +4,8 @@ All notable changes to pi-retainer (called pi-domain until 0.4.0) are listed her
 
 ## [Unreleased]
 
+## [0.4.0]
+
 ### Changed
 
 - Renamed from pi-domain to pi-retainer: the npm package, the repository (one24-ai/pi-retainer), the extension folder (`extensions/retainer`), the database (`pi-retainer/retainer.db` in the data directory), the settings file (`pi-retainer.json`), snapshot names (`retainer-YYYYMMDD-HHMMSS.db`) and the environment variables (`PI_RETAINER_DB`, `PI_RETAINER_REPOS`). Breaking in name only: everything below keeps working. See "Moving from pi-domain" in the README.
@@ -55,7 +57,8 @@ First public release.
 - Settings in `pi-domain.json`.
 - Optional pi-halo pairing: halo tool rows, a plain recall row and a sidebar section, through halo's globals only.
 
-[Unreleased]: https://github.com/one24-ai/pi-retainer/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/one24-ai/pi-retainer/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/one24-ai/pi-retainer/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/one24-ai/pi-retainer/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/one24-ai/pi-retainer/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/one24-ai/pi-retainer/compare/v0.1.0...v0.1.1
