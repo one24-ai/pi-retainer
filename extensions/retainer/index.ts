@@ -450,7 +450,10 @@ export default function (pi: ExtensionAPI) {
 
 	// Recall rides along with the first prompt of a context: once per session, again after
 	// compaction has summarised the earlier one away, never twice (a reload or resume finds it).
+	// Only user prompts: since pi 1.2 this also fires for runs another extension starts with a
+	// custom message, which carry no prompt to match memories against.
 	pi.on("before_agent_start", (event, ctx) => {
+		if (event.messageType !== "user") return;
 		if (recallChecked || recallInContext(ctx) !== undefined) return;
 		recallChecked = true;
 		const r = settings.recall;

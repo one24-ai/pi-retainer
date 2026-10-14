@@ -22,7 +22,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       # The tests and type check link the installed pi's packages; install the pi version pi-retainer targets.
-      - run: pnpm add --global @earendil-works/pi-coding-agent@1.1.0
+      - run: pnpm add --global @earendil-works/pi-coding-agent@1.2.0
       - run: pnpm check
       - name: The packed tarball has the extension and nothing else it should not
         run: |

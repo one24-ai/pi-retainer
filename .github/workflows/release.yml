@@ -24,7 +24,7 @@ jobs:
         with:
           node-version: 24
       - run: pnpm install --frozen-lockfile
-      - run: pnpm add --global @earendil-works/pi-coding-agent@1.1.0
+      - run: pnpm add --global @earendil-works/pi-coding-agent@1.2.0
       - run: pnpm check
       - name: Tag matches package.json
         run: |

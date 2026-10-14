@@ -8,6 +8,7 @@ All notable changes to pi-retainer (called pi-domain until 0.4.0) are listed her
 
 - Renamed from pi-domain to pi-retainer: the npm package, the repository (one24-ai/pi-retainer), the extension folder (`extensions/retainer`), the database (`pi-retainer/retainer.db` in the data directory), the settings file (`pi-retainer.json`), snapshot names (`retainer-YYYYMMDD-HHMMSS.db`) and the environment variables (`PI_RETAINER_DB`, `PI_RETAINER_REPOS`). Breaking in name only: everything below keeps working. See "Moving from pi-domain" in the README.
 - pi-halo is now pi-chassis; the docs and comments use the new name. The pairing still goes through the same globals.
+- Requires pi 1.2. Recall still comes with the first user prompt only: runs another extension starts with a custom message, which pi 1.2 now passes through `before_agent_start`, get no recall. Breaking for pi 1.1 users.
 
 ### Deprecated
 

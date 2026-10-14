@@ -70,7 +70,7 @@ function fakePi() {
 	};
 	/** A prompt as pi runs it: before_agent_start, then the user message and what the handler added. */
 	const prompt = async (text: string) => {
-		const r = await emit("before_agent_start", { prompt: text, systemPrompt: "", systemPromptOptions: {} });
+		const r = await emit("before_agent_start", { messageType: "user", prompt: text, images: [], systemPrompt: "", systemPromptOptions: {} });
 		const userId = sm.appendMessage({ role: "user", content: text, timestamp: Date.now() } as any);
 		if (r?.message) sm.appendCustomMessageEntry(r.message.customType, r.message.content, r.message.display, r.message.details);
 		return { message: r?.message, userId };
@@ -117,6 +117,16 @@ test("recall comes with the first prompt, once; a reload or resume does not add 
 		await f.emit("session_start", { reason });
 		assert.equal((await f.prompt(`after ${reason}`)).message, undefined, `not after ${reason}`);
 	}
+	assert.equal(f.recalls(), 1);
+});
+
+test("a run another extension starts with a custom message gets no recall; the next prompt does", async () => {
+	seed([["A fact.", {}]]);
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	const custom = await f.emit("before_agent_start", { messageType: "custom", message: { role: "custom", customType: "other", content: "x" }, systemPrompt: "", systemPromptOptions: {} });
+	assert.equal(custom, undefined);
+	assert.ok((await f.prompt("hello")).message, "recall on the first user prompt");
 	assert.equal(f.recalls(), 1);
 });
 

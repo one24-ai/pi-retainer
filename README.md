@@ -4,7 +4,7 @@ Persistent memory for [pi](https://pi.dev). The model saves decisions, preferenc
 
 Named after a retainer, the clip that keeps a part in place: it keeps what your sessions learn. pi-retainer was called pi-domain until 0.4.0 (see [Moving from pi-domain](#moving-from-pi-domain)).
 
-Requires pi 1.1 and Node.js 22.19 or later (for `node:sqlite`).
+Requires pi 1.2 and Node.js 22.19 or later (for `node:sqlite`).
 
 ```bash
 pi install npm:pi-retainer@0.4.0                        # from npm, pinned
