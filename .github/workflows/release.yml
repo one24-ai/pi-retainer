@@ -31,11 +31,22 @@ jobs:
           test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
       # Trusted publishing needs npm 11.5.1 or later and is documented for `npm publish` only.
       - run: npm install --global npm@12.2.0
-      - run: npm publish
+      # Skipped when this version is already on npm (the first pi-retainer release is published by
+      # hand, because npm only lets a trusted publisher be set on a package that exists).
+      - name: Publish pi-retainer
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          if npm view "pi-retainer@$v" version >/dev/null 2>&1; then echo "pi-retainer $v is already published"; else npm publish; fi
+      # The old name: a bridge that bundles this version, so installs of pi-domain keep working.
+      - name: Publish the pi-domain bridge
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          node scripts/build-domain-bridge.mjs
+          if npm view "pi-domain@$v" version >/dev/null 2>&1; then echo "pi-domain $v is already published"; else (cd compat/pi-domain && npm publish); fi
       - name: GitHub release from the changelog
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           v="${GITHUB_REF_NAME#v}"
           awk -v v="$v" '$0 ~ "^## \\[" v "\\]" {p=1; next} /^## \[/ {p=0} p' CHANGELOG.md > notes.md
-          gh release create "$GITHUB_REF_NAME" --title "pi-domain $v" --notes-file notes.md
+          gh release create "$GITHUB_REF_NAME" --title "pi-retainer $v" --notes-file notes.md

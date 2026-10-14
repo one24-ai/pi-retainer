@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { findMisfiled } from "../extensions/domain/misfiled.ts";
-import type { MemoryRow } from "../extensions/domain/store.ts";
+import { findMisfiled } from "../extensions/retainer/misfiled.ts";
+import type { MemoryRow } from "../extensions/retainer/store.ts";
 
 let id = 1;
 const row = (text: string, o: Partial<MemoryRow> = {}): MemoryRow => ({ id: id++, scope: "project:home", kind: "fact", text, tags: [], pinned: false, createdAt: 0, updatedAt: 0, sessionId: null, ...o });
-const repos = ["kiln", "pi-halo", "pi-domain", "glean-bridge", "app", "tools"];
+const repos = ["kiln", "pi-chassis", "pi-retainer", "glean-bridge", "app", "tools"];
 const folder = (scope: string) => scope === "project:home" || scope === "project:zach";
 
 test("a memory in a folder scope that names one project by path is offered a move", () => {
@@ -18,7 +18,7 @@ test("a memory in a folder scope that names one project by path is offered a mov
 test("a bare name counts when it stands alone, not inside another word or path", () => {
 	assert.equal(findMisfiled([row("kiln needs a retry policy.")], folder, repos)[0]?.to, "project:kiln");
 	assert.equal(findMisfiled([row("Reached via glean-bridge's CDP port.")], folder, repos)[0]?.to, "project:glean-bridge");
-	assert.deepEqual(findMisfiled([row("the kilnwork pattern"), row("a my-kiln-like thing"), row("pi-halo-riot is separate")], folder, repos), []);
+	assert.deepEqual(findMisfiled([row("the kilnwork pattern"), row("a my-kiln-like thing"), row("pi-chassis-riot is separate")], folder, repos), []);
 });
 
 test("short names are never matched by bare word, so ordinary words do not misfile", () => {
@@ -26,12 +26,12 @@ test("short names are never matched by bare word, so ordinary words do not misfi
 });
 
 test("two projects, or none, give no suggestion", () => {
-	assert.deepEqual(findMisfiled([row("Both kiln and pi-halo use this.")], folder, repos), []);
+	assert.deepEqual(findMisfiled([row("Both kiln and pi-chassis use this.")], folder, repos), []);
 	assert.deepEqual(findMisfiled([row("Nothing about any project here.")], folder, repos), []);
 });
 
 test("memories already in a real project, summaries, and ones naming their own scope are left alone", () => {
-	assert.deepEqual(findMisfiled([row("Uses ~/git/kiln", { scope: "project:pi-halo" })], folder, repos), []);
+	assert.deepEqual(findMisfiled([row("Uses ~/git/kiln", { scope: "project:pi-chassis" })], folder, repos), []);
 	assert.deepEqual(findMisfiled([row("Uses ~/git/kiln", { kind: "summary" })], folder, repos), []);
 	assert.deepEqual(findMisfiled([row("Uses ~/git/kiln", { scope: "global" })], folder, repos), []);
 	assert.deepEqual(findMisfiled([row("About home.", { scope: "project:home" })], folder, [...repos, "home"]), []);
@@ -45,7 +45,7 @@ test("regex characters in project names are taken literally", () => {
 test("text that also names a project that no longer exists is left alone", () => {
 	assert.deepEqual(findMisfiled([row("pi-workflow lives in ~/git/pi-workflow and hands work to ~/git/kiln.")], folder, repos), [], "a removed repo by path");
 	assert.deepEqual(findMisfiled([row("pi-paneltui was renamed; kiln still uses its widgets.")], folder, repos), [], "an old pi-style name");
-	assert.equal(findMisfiled([row("pi-halo and pi-domain are separate; see ~/git/kiln.")], folder, repos).length, 0, "two projects that exist");
+	assert.equal(findMisfiled([row("pi-chassis and pi-retainer are separate; see ~/git/kiln.")], folder, repos).length, 0, "two projects that exist");
 	assert.equal(findMisfiled([row("See ~/git/kiln/docs for details.")], folder, repos)[0]?.to, "project:kiln", "a plain mention still counts");
 });
 

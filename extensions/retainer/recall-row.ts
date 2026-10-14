@@ -3,18 +3,18 @@
  * list; this only decides what the person sees.
  *
  * Two looks, chosen each time the row is drawn:
- *  - with pi-halo loaded: one plain row drawn like its tool rows (a dim brain icon, the title,
- *    the count on the right), expanding to the list underneath. halo leaves this type's own
+ *  - with pi-chassis loaded: one plain row drawn like its tool rows (a dim brain icon, the title,
+ *    the count on the right), expanding to the list underneath. chassis leaves this type's own
  *    drawing alone (it lists "memory-recall" among the messages that draw a plain row).
  *  - without it: pi's standard boxed custom message, "[memory-recall] N memories recalled" with an
  *    expand hint.
  *
- * pi-domain does not depend on halo: see halo.ts for how it finds it.
+ * pi-retainer does not depend on chassis: see chassis.ts for how it finds it.
  */
 
 import type { MessageRenderer, Theme } from "@earendil-works/pi-coding-agent";
 import { Box, type Component, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { MEMORY_ICON } from "./halo.ts";
+import { MEMORY_ICON } from "./chassis.ts";
 
 export const RECALL_ICON = MEMORY_ICON.nerd;
 
@@ -25,8 +25,8 @@ type Options = Parameters<MessageRenderer<Details>>[1];
 export interface RecallDeps {
 	/** The "ctrl+o to expand" hint, as pi words it for the current keybindings. */
 	expandHint: () => string;
-	/** Whether pi-halo is loaded. */
-	halo: () => boolean;
+	/** Whether pi-chassis is loaded. */
+	chassis: () => boolean;
 }
 
 const noun = (n: number) => `${n} ${n === 1 ? "memory" : "memories"}`;
@@ -47,7 +47,7 @@ function bodyOf(message: Message): string {
 				.join("\n");
 }
 
-/** The halo look: one plain row, the list under it when expanded. */
+/** The chassis look: one plain row, the list under it when expanded. */
 export function plainRecallRow(message: Message, options: Options, theme: Theme): Component {
 	const left = `${theme.fg("dim", RECALL_ICON)} ${theme.fg("text", "Recall")} ${theme.fg("muted", "session memories")}`;
 	const right = theme.fg("dim", countText(message.details));
@@ -84,5 +84,5 @@ export function boxRecallRow(message: Message, options: Options, theme: Theme, h
 }
 
 export function recallRenderer(deps: RecallDeps): MessageRenderer<Details> {
-	return (message, options, theme) => (deps.halo() ? plainRecallRow(message, options, theme) : boxRecallRow(message, options, theme, deps.expandHint()));
+	return (message, options, theme) => (deps.chassis() ? plainRecallRow(message, options, theme) : boxRecallRow(message, options, theme, deps.expandHint()));
 }

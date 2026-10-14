@@ -5,8 +5,8 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { haloLoaded } from "../extensions/domain/halo.ts";
-import { plainRecallRow, recallRenderer, RECALL_ICON } from "../extensions/domain/recall-row.ts";
+import { chassisLoaded } from "../extensions/retainer/chassis.ts";
+import { plainRecallRow, recallRenderer, RECALL_ICON } from "../extensions/retainer/recall-row.ts";
 
 const theme = {
 	fg: (_c: string, t: string) => t,
@@ -22,22 +22,22 @@ const draw = (row: { render: (w: number) => string[] } | undefined, width: numbe
 	return row.render(width).map(strip);
 };
 
-test("haloLoaded looks only for the registry symbol with a register function", () => {
+test("chassisLoaded looks only for the registry symbol with a register function", () => {
 	const key = Symbol.for("pi-halo/registry");
-	assert.equal(haloLoaded({}), false);
-	assert.equal(haloLoaded({ [key]: {} }), false);
-	assert.equal(haloLoaded({ [key]: { register: () => {} } }), true);
+	assert.equal(chassisLoaded({}), false);
+	assert.equal(chassisLoaded({ [key]: {} }), false);
+	assert.equal(chassisLoaded({ [key]: { register: () => {} } }), true);
 });
 
-test("with halo: one plain row with the icon, the title and the count on the right", () => {
-	const lines = draw(recallRenderer({ halo: () => true, expandHint: () => "HINT" })(msg(2), opts(false), theme), 60);
+test("with chassis: one plain row with the icon, the title and the count on the right", () => {
+	const lines = draw(recallRenderer({ chassis: () => true, expandHint: () => "HINT" })(msg(2), opts(false), theme), 60);
 	assert.equal(lines.length, 1);
 	assert.ok(lines[0]!.includes(RECALL_ICON));
 	assert.match(lines[0]!, /Recall\s+session memories\s+2 memories$/);
 	assert.ok(!lines[0]!.includes("HINT"));
 });
 
-test("with halo, expanded: the list appears under the row, indented", () => {
+test("with chassis, expanded: the list appears under the row, indented", () => {
 	const lines = draw(plainRecallRow(msg(2), opts(true), theme), 60);
 	assert.equal(lines.length, 3);
 	assert.match(lines[1]!, /^\s{3}line one/);
@@ -52,21 +52,21 @@ test("a narrow width truncates instead of overflowing", () => {
 	for (const w of [8, 20, 30]) for (const l of draw(plainRecallRow(msg(12), opts(false), theme), w)) assert.ok(l.length <= w, `width ${w}: ${l.length}`);
 });
 
-test("without halo: pi's standard box, collapsed with the expand hint", () => {
-	const text = draw(recallRenderer({ halo: () => false, expandHint: () => "ctrl+o to expand" })(msg(3), opts(false), theme), 80).join("\n");
+test("without chassis: pi's standard box, collapsed with the expand hint", () => {
+	const text = draw(recallRenderer({ chassis: () => false, expandHint: () => "ctrl+o to expand" })(msg(3), opts(false), theme), 80).join("\n");
 	assert.match(text, /\[memory-recall\] 3 memories recalled ctrl\+o to expand/);
 	assert.ok(!text.includes("line one"));
 });
 
-test("without halo, expanded: the list is in the box and the hint is gone", () => {
-	const text = draw(recallRenderer({ halo: () => false, expandHint: () => "HINT" })(msg(2), opts(true), theme), 80).join("\n");
+test("without chassis, expanded: the list is in the box and the hint is gone", () => {
+	const text = draw(recallRenderer({ chassis: () => false, expandHint: () => "HINT" })(msg(2), opts(true), theme), 80).join("\n");
 	assert.ok(text.includes("line one") && text.includes("line two"));
 	assert.ok(!text.includes("HINT"));
 });
 
-test("the choice is made on each draw, so loading halo later changes the look", () => {
+test("the choice is made on each draw, so loading chassis later changes the look", () => {
 	let loaded = false;
-	const render = recallRenderer({ halo: () => loaded, expandHint: () => "H" });
+	const render = recallRenderer({ chassis: () => loaded, expandHint: () => "H" });
 	assert.match(draw(render(msg(), opts(false), theme), 80).join("\n"), /\[memory-recall\]/);
 	loaded = true;
 	assert.ok(!draw(render(msg(), opts(false), theme), 80).join("\n").includes("[memory-recall]"));

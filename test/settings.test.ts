@@ -3,10 +3,10 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { DEFAULT_SETTINGS, loadSettings, parseSettings, settingsPath } from "../extensions/domain/settings.ts";
+import { DEFAULT_SETTINGS, loadSettings, parseSettings, settingsPath } from "../extensions/retainer/settings.ts";
 
 test("no file: the defaults, and no error", () => {
-	const r = loadSettings(join(tmpdir(), "pi-domain-none", "pi-domain.json"));
+	const r = loadSettings(join(tmpdir(), "pi-retainer-none", "pi-retainer.json"));
 	assert.deepEqual(r.settings, DEFAULT_SETTINGS);
 	assert.equal(r.error, undefined);
 });
@@ -37,9 +37,9 @@ test("anything that is not an object is the defaults", () => {
 });
 
 test("a malformed file gives the defaults and says why", () => {
-	const dir = mkdtempSync(join(tmpdir(), "pi-domain-settings-"));
+	const dir = mkdtempSync(join(tmpdir(), "pi-retainer-settings-"));
 	try {
-		const path = join(dir, "pi-domain.json");
+		const path = join(dir, "pi-retainer.json");
 		writeFileSync(path, "{ recall: ");
 		const r = loadSettings(path);
 		assert.deepEqual(r.settings, DEFAULT_SETTINGS);
@@ -52,7 +52,7 @@ test("a malformed file gives the defaults and says why", () => {
 });
 
 test("the file lives in pi's agent directory", () => {
-	assert.equal(settingsPath("/cfg"), "/cfg/pi-domain.json");
+	assert.equal(settingsPath("/cfg"), "/cfg/pi-retainer.json");
 });
 
 test("a recall budget too small for the header is raised; 0 turns recall off", () => {

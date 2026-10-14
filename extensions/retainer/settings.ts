@@ -1,7 +1,8 @@
 /**
- * pi-domain settings, read from pi-domain.json in pi's agent directory (~/.pi/agent unless pi
+ * pi-retainer settings, read from pi-retainer.json in pi's agent directory (~/.pi/agent unless pi
  * is told otherwise). Every key is optional; a missing file, a malformed file
  * or a value of the wrong type falls back to the default, so a typo never stops pi from starting.
+ * A pi-domain.json left by the old name is copied to pi-retainer.json once, when that is missing.
  *
  *   {
  *     "recall":    { "maxChars": 4000, "maxItems": 20, "globalShare": 0.5, "inlineChars": 300 },
@@ -13,7 +14,7 @@
  * Free of pi imports so it can be tested on its own.
  */
 
-import { readFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -62,9 +63,16 @@ export const DEFAULT_SETTINGS: RecallSettings = {
 	backup: { everyHours: 24, keep: 20 },
 };
 
-/** pi-domain.json in pi's agent directory (pass pi's getAgentDir()). */
+/** pi-retainer.json in pi's agent directory (pass pi's getAgentDir()). */
 export function settingsPath(agentDir: string = join(homedir(), ".pi", "agent")): string {
-	return join(agentDir, "pi-domain.json");
+	const path = join(agentDir, "pi-retainer.json");
+	const legacy = join(agentDir, "pi-domain.json");
+	try {
+		if (!existsSync(path) && existsSync(legacy)) copyFileSync(legacy, path);
+	} catch {
+		// Read-only agent directory: the defaults apply, as with no file at all.
+	}
+	return path;
 }
 
 type Bounds = { min: number; max: number; int?: boolean };

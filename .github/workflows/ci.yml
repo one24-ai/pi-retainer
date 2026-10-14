@@ -21,11 +21,16 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # The tests and type check link the installed pi's packages; install the pi version pi-domain targets.
+      # The tests and type check link the installed pi's packages; install the pi version pi-retainer targets.
       - run: pnpm add --global @earendil-works/pi-coding-agent@1.1.0
       - run: pnpm check
       - name: The packed tarball has the extension and nothing else it should not
         run: |
           pnpm pack
-          tar tzf pi-domain-*.tgz | grep -q '^package/extensions/domain/index.ts$'
-          ! tar tzf pi-domain-*.tgz | grep -E '^package/(test|scripts|\.github)/'
+          tar tzf pi-retainer-*.tgz | grep -q '^package/extensions/retainer/index.ts$'
+          ! tar tzf pi-retainer-*.tgz | grep -E '^package/(test|scripts|\.github)/'
+      - name: The pi-domain bridge bundles this version and points at its extension
+        run: |
+          node scripts/build-domain-bridge.mjs
+          node -e 'const p=require("./compat/pi-domain/package.json"); const fs=require("fs"); for (const e of p.pi.extensions) if (!fs.existsSync("compat/pi-domain/"+e)) { console.error("missing " + e); process.exit(1); }'
+          (cd compat/pi-domain && npm pack --dry-run --json | node -e 'const d=JSON.parse(require("fs").readFileSync(0,"utf8"))[0]; if (!d.files.some((f) => f.path === "node_modules/pi-retainer/extensions/retainer/index.ts")) process.exit(1)')

@@ -1,5 +1,5 @@
 /**
- * pi-domain: persistent memory for pi, in a local SQLite database.
+ * pi-retainer: persistent memory for pi, in a local SQLite database.
  *
  *  - Tools for the model: memory_write, memory_update, memory_search, memory_get and
  *    memory_forget (each deletion confirmed by the user).
@@ -10,10 +10,10 @@
  *  - With summaries.save on, compaction summaries are kept as searchable notes; a snapshot of the
  *    database is taken daily.
  *  - Commands: /memory, /memory-forget, /memory-pin, /memory-tidy, /memory-backup, /memory-restore.
- *  - With pi-halo loaded: halo-styled tool rows and a sidebar section (see halo.ts). Optional.
+ *  - With pi-chassis loaded: chassis-styled tool rows and a sidebar section (see chassis.ts). Optional.
  *
  * Memories are scoped per git repository with a shared `global` scope (scope.ts). The database is
- * ~/.local/share/pi-domain/domain.db (paths.ts); settings are in pi-domain.json (settings.ts).
+ * ~/.local/share/pi-retainer/retainer.db (paths.ts); settings are in pi-retainer.json (settings.ts).
  */
 
 import { StringEnum } from "@earendil-works/pi-ai";
@@ -23,7 +23,7 @@ import { Type } from "typebox";
 import { autoBackup, backupDb } from "./backup.ts";
 import { buildDigest } from "./digest.ts";
 import { compactChars, formatRow, formatSearchRow, lengthNote, memories } from "./format.ts";
-import { haloLoaded, markPlainMessage, offerToolRows, registerSidebar, type SidebarState } from "./halo.ts";
+import { chassisLoaded, markPlainMessage, offerToolRows, registerSidebar, type SidebarState } from "./chassis.ts";
 import { backupDirFor, type DbLocation, resolveDb } from "./paths.ts";
 import { recallRenderer } from "./recall-row.ts";
 import { findSnapshot, listSnapshots, restoreSnapshot, snapshotLabel } from "./restore.ts";
@@ -44,8 +44,8 @@ const RELATED_LIMIT = 5;
 
 type RecallDetails = { count: number; total: number; chars: number; ids: number[] };
 
-// ------------------------------------------------------------------ renderers (without pi-halo)
-// With halo loaded, halo draws these tools from the specs in halo.ts instead.
+// ------------------------------------------------------------------ renderers (without pi-chassis)
+// With chassis loaded, chassis draws these tools from the specs in chassis.ts instead.
 
 const oneLine = (s: string) => s.replace(/\s+/g, " ").trim();
 const short = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
@@ -165,7 +165,7 @@ export default function (pi: ExtensionAPI) {
 		sidebar?.refresh();
 	}
 
-	// halo (optional): its rows for the memory tools, and the recall row drawn without a panel.
+	// chassis (optional): its rows for the memory tools, and the recall row drawn without a panel.
 	offerToolRows();
 	markPlainMessage(RECALL_TYPE);
 
@@ -358,7 +358,7 @@ export default function (pi: ExtensionAPI) {
 
 	pi.registerMessageRenderer<RecallDetails>(
 		RECALL_TYPE,
-		recallRenderer({ halo: haloLoaded, expandHint: () => keyHint("app.tools.expand", "to expand") }),
+		recallRenderer({ chassis: chassisLoaded, expandHint: () => keyHint("app.tools.expand", "to expand") }),
 	);
 
 	/**
@@ -420,7 +420,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", (_event, ctx) => {
 		const loaded = loadSettings(settingsPath(getAgentDir()));
 		settings = loaded.settings;
-		if (loaded.error && ctx.hasUI) ctx.ui.notify(`pi-domain: ignoring ${loaded.path} (${loaded.error})`, "warning");
+		if (loaded.error && ctx.hasUI) ctx.ui.notify(`pi-retainer: ignoring ${loaded.path} (${loaded.error})`, "warning");
 		const s = openStore();
 		// A snapshot when the newest is old enough, quietly: only a failure is worth a word.
 		try {
@@ -432,7 +432,7 @@ export default function (pi: ExtensionAPI) {
 				keep: settings.backup.keep,
 			});
 		} catch (err) {
-			if (ctx.hasUI) ctx.ui.notify(`pi-domain: automatic backup failed: ${(err as Error).message}`, "warning");
+			if (ctx.hasUI) ctx.ui.notify(`pi-retainer: automatic backup failed: ${(err as Error).message}`, "warning");
 		}
 		resetRecall();
 		sidebar?.dispose();
@@ -474,7 +474,7 @@ export default function (pi: ExtensionAPI) {
 		);
 		if (digest.pinnedLeftOut > 0 && ctx.hasUI) {
 			ctx.ui.notify(
-				`pi-domain: ${digest.pinnedLeftOut} pinned ${digest.pinnedLeftOut === 1 ? "memory does" : "memories do"} not fit the recall budget; shorten or unpin some (/memory-tidy), or raise recall.maxChars`,
+				`pi-retainer: ${digest.pinnedLeftOut} pinned ${digest.pinnedLeftOut === 1 ? "memory does" : "memories do"} not fit the recall budget; shorten or unpin some (/memory-tidy), or raise recall.maxChars`,
 				"info",
 			);
 		}

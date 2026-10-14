@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { haloLoaded, markPlainMessage, offerToolRows, registerSidebar, type SidebarState, toolRowSpecs } from "../extensions/domain/halo.ts";
+import { chassisLoaded, markPlainMessage, offerToolRows, registerSidebar, type SidebarState, toolRowSpecs } from "../extensions/retainer/chassis.ts";
 
 const REGISTRY = Symbol.for("pi-halo/registry");
 const PENDING = Symbol.for("pi-halo/pendingToolRows");
 const PLAIN = Symbol.for("halo.plainMessageTypes");
 const theme = { fg: (_c: string, t: string) => t };
 
-test("haloLoaded needs a registry with a register function", () => {
-	assert.equal(haloLoaded({}), false);
-	assert.equal(haloLoaded({ [REGISTRY]: {} }), false);
-	assert.equal(haloLoaded({ [REGISTRY]: { register: () => {} } }), true);
+test("chassisLoaded needs a registry with a register function", () => {
+	assert.equal(chassisLoaded({}), false);
+	assert.equal(chassisLoaded({ [REGISTRY]: {} }), false);
+	assert.equal(chassisLoaded({ [REGISTRY]: { register: () => {} } }), true);
 });
 
 test("every memory tool has a complete row spec", () => {
@@ -33,17 +33,17 @@ test("every memory tool has a complete row spec", () => {
 	}
 });
 
-test("with halo loaded the rows are registered under pi-domain's id", () => {
+test("with chassis loaded the rows are registered under pi-retainer's id", () => {
 	const calls: any[] = [];
 	const g = { [REGISTRY]: { register() {}, toolRowsVersion: 1, registerToolRows: (specs: any, o: any) => (calls.push({ specs, o }), () => calls.push("removed")) } };
 	const remove = offerToolRows(g);
-	assert.equal(calls[0].o.id, "pi-domain");
+	assert.equal(calls[0].o.id, "pi-retainer");
 	assert.ok("memory_get" in calls[0].specs);
 	remove();
 	assert.equal(calls[1], "removed");
 });
 
-test("before halo loads the rows wait in its queue, and a reload replaces the earlier entry", () => {
+test("before chassis loads the rows wait in its queue, and a reload replaces the earlier entry", () => {
 	const g: Record<symbol, any> = {};
 	offerToolRows(g);
 	offerToolRows(g);
@@ -52,14 +52,14 @@ test("before halo loads the rows wait in its queue, and a reload replaces the ea
 	let removedByHost = false;
 	g[PENDING][0].attach(() => (removedByHost = true));
 	remove();
-	assert.equal(removedByHost, true, "removing after halo took them calls halo's remover");
+	assert.equal(removedByHost, true, "removing after chassis took them calls chassis's remover");
 	const g2: Record<symbol, any> = {};
 	const r2 = offerToolRows(g2);
 	r2();
-	assert.equal(g2[PENDING].length, 0, "removing before halo took them leaves the queue");
+	assert.equal(g2[PENDING].length, 0, "removing before chassis took them leaves the queue");
 });
 
-test("markPlainMessage adds to halo's shared set, creating it if needed", () => {
+test("markPlainMessage adds to chassis's shared set, creating it if needed", () => {
 	const g: Record<symbol, any> = {};
 	markPlainMessage("memory-recall", g);
 	assert.ok(g[PLAIN].has("memory-recall"));
@@ -70,9 +70,9 @@ test("markPlainMessage adds to halo's shared set, creating it if needed", () => 
 	assert.deepEqual([...existing], ["other", "memory-recall"]);
 });
 
-test("the sidebar registers only with halo, and shows recall size and this session's memories", async () => {
+test("the sidebar registers only with chassis, and shows recall size and this session's memories", async () => {
 	const state: SidebarState = { recalled: 0, total: 0, chars: 0, budget: 4000, touched: [] };
-	assert.equal(registerSidebar({}, {}, () => state, () => {}, {}), undefined, "no halo, no widget");
+	assert.equal(registerSidebar({}, {}, () => state, () => {}, {}), undefined, "no chassis, no widget");
 
 	let spec: any;
 	let ctxGiven: unknown;
@@ -80,7 +80,7 @@ test("the sidebar registers only with halo, and shows recall size and this sessi
 	const ctx = { hasUI: true };
 	assert.ok(registerSidebar({}, ctx, () => state, () => {}, g));
 	assert.equal(ctxGiven, ctx, "the session's ctx is passed so the widget starts at once");
-	assert.equal(spec.id, "pi-domain");
+	assert.equal(spec.id, "pi-retainer");
 	assert.equal(spec.sidebar, "section");
 	assert.deepEqual(spec.render({}).text, "none yet");
 
