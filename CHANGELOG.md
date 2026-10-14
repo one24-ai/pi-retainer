@@ -4,6 +4,16 @@ All notable changes to pi-retainer (called pi-domain until 0.4.0) are listed her
 
 ## [Unreleased]
 
+## [0.6.0]
+
+### Added
+
+- `/memory-compact [ids | project | all]` shortens long memories with the model, in one-off requests outside your conversation. It shows the number of requests, the model and a token estimate and asks first; checks every answer so that the short note and the notes split off hold every URL, path, command, ticket key, version, date, hash, flag, `#id`, UPPER_CASE name, number with a unit and quoted phrase of the original; refuses and leaves unchanged any answer that fails; shows one line per memory; asks again before writing; and skips a memory that changed while the model worked. `compact.maxPerRun` and `compact.concurrency` set its limits.
+
+### Changed
+
+- **Behaviour change:** `/memory-tidy` no longer uses the model. It does local cleanup only (move misfiled memories, delete superseded ones, old summaries and near-duplicates), counts memories over `write.warnChars` instead of offering to shorten them, and points at `/memory-compact`. The "Ask agent to merge" and "Ask agent to shorten" choices and the message they sent to the conversation are gone.
+
 ## [0.5.0]
 
 ### Added
@@ -74,7 +84,8 @@ First public release.
 - Settings in `pi-domain.json`.
 - Optional pi-halo pairing: halo tool rows, a plain recall row and a sidebar section, through halo's globals only.
 
-[Unreleased]: https://github.com/one24-ai/pi-retainer/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/one24-ai/pi-retainer/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/one24-ai/pi-retainer/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/one24-ai/pi-retainer/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/one24-ai/pi-retainer/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/one24-ai/pi-retainer/compare/v0.3.0...v0.4.0

@@ -8,6 +8,7 @@
  *     "recall":    { "maxChars": 4000, "maxItems": 20, "globalShare": 0.5, "inlineChars": 300 },
  *     "write":     { "warnChars": 600, "checkSecrets": true, "similarity": 0.5 },
  *     "summaries": { "save": false, "maxChars": 4000, "keep": 3 },
+ *     "compact":   { "maxPerRun": 25, "concurrency": 3 },
  *     "backup":    { "everyHours": 24, "keep": 20 }
  *   }
  *
@@ -52,6 +53,12 @@ export interface RecallSettings {
 		/** /memory-tidy suggests deleting summaries beyond the newest this many per project. */
 		keep: number;
 	};
+	compact: {
+		/** /memory-compact shortens at most this many memories in one run. */
+		maxPerRun: number;
+		/** Requests to the model run this many at a time. */
+		concurrency: number;
+	};
 	backup: {
 		/** Hours between automatic snapshots at session start; 0 turns them off. */
 		everyHours: number;
@@ -64,6 +71,7 @@ export const DEFAULT_SETTINGS: RecallSettings = {
 	recall: { maxChars: 4000, maxItems: 20, globalShare: 0.5, inlineChars: 300 },
 	write: { warnChars: 600, checkSecrets: true, similarity: 0.5 },
 	summaries: { save: false, maxChars: 4000, keep: 3 },
+	compact: { maxPerRun: 25, concurrency: 3 },
 	backup: { everyHours: 24, keep: 20 },
 };
 
@@ -96,6 +104,7 @@ export function parseSettings(raw: unknown): RecallSettings {
 	const w = obj(obj(raw).write);
 	const s = obj(obj(raw).summaries);
 	const b = obj(obj(raw).backup);
+	const c = obj(obj(raw).compact);
 	return {
 		recall: {
 			// Below about 500 the header and footer leave no room; 0 turns recall off.
@@ -113,6 +122,10 @@ export function parseSettings(raw: unknown): RecallSettings {
 			save: typeof s.save === "boolean" ? s.save : d.summaries.save,
 			maxChars: num(s.maxChars, d.summaries.maxChars, { min: 200, max: 100_000, int: true }),
 			keep: num(s.keep, d.summaries.keep, { min: 0, max: 1000, int: true }),
+		},
+		compact: {
+			maxPerRun: num(c.maxPerRun, d.compact.maxPerRun, { min: 1, max: 200, int: true }),
+			concurrency: num(c.concurrency, d.compact.concurrency, { min: 1, max: 8, int: true }),
 		},
 		backup: {
 			everyHours: num(b.everyHours, d.backup.everyHours, { min: 0, max: 24 * 365 }),

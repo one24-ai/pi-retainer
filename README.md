@@ -7,8 +7,8 @@ Named after a retainer, the clip that keeps a part in place: it keeps what your 
 Requires pi 1.2 and Node.js 22.19 or later (for `node:sqlite`).
 
 ```bash
-pi install npm:pi-retainer@0.5.0                        # from npm, pinned
-pi install git:github.com/one24-ai/pi-retainer@v0.5.0   # from git, pinned to a tag
+pi install npm:pi-retainer@0.6.0                        # from npm, pinned
+pi install git:github.com/one24-ai/pi-retainer@v0.6.0   # from git, pinned to a tag
 pi install /path/to/pi-retainer                         # a local checkout
 ```
 
@@ -63,7 +63,8 @@ Memories from earlier sessions (project:my-app and global). Lines ending in [N c
 | `/memory [words]` | List or search memories, with counts per scope and the size of this session's recall |
 | `/memory-pin <id>` | Pin or unpin a memory |
 | `/memory-forget <id>` | Delete a memory, after you confirm |
-| `/memory-tidy [all]` | Step through cleanup suggestions, with a count first: memories filed under a folder that name a project (offered a move to it, or to global), memories that say they supersede others, near-duplicates, "Extends #N" notes to fold in, memories over 600 characters, and old compaction summaries. You choose for each: move, delete, keep, or ask the agent to merge or shorten. It covers this project and global; `all` covers every project |
+| `/memory-tidy [all]` | Local cleanup, never the model. Steps through a count first, then each suggestion: memories filed under a folder that name a project (move them there, or make them global), memories that say they supersede others, near-duplicates, "Extends #N" notes, and old compaction summaries. You choose for each: move, delete or keep. It covers this project and global; `all` covers every project. Long memories are only counted, with a pointer to `/memory-compact` |
+| `/memory-compact [ids \| project \| all]` | Shorten long memories with the model, checked so nothing is lost (see below) |
 | `/memory-backup` | Save a checked snapshot now |
 | `/memory-restore [name]` | Replace all memories with a snapshot, after you confirm |
 
@@ -76,6 +77,7 @@ Optional. Put any of these in `~/.pi/agent/pi-retainer.json` (or `$PI_CODING_AGE
   "recall": { "maxChars": 4000, "maxItems": 20, "globalShare": 0.5, "inlineChars": 300 },
   "write": { "warnChars": 600, "checkSecrets": true, "similarity": 0.5 },
   "summaries": { "save": false, "maxChars": 4000, "keep": 3 },
+  "compact": { "maxPerRun": 25, "concurrency": 3 },
   "backup": { "everyHours": 24, "keep": 20 }
 }
 ```
@@ -86,12 +88,14 @@ Optional. Put any of these in `~/.pi/agent/pi-retainer.json` (or `$PI_CODING_AGE
 | `recall.maxItems` | 20 | Memories listed at most |
 | `recall.globalShare` | 0.5 | Share of the budget global memories get before the project has had its turn |
 | `recall.inlineChars` | 300 | Memories up to this long are shown whole, in recall and in search results |
-| `write.warnChars` | 600 | Saving longer text gets a note; `/memory-tidy` suggests shortening. 0 turns both off |
+| `write.warnChars` | 600 | Saving longer text gets a note, and `/memory-compact` shortens memories over this length. 0 turns the note off, and `/memory-compact` then needs ids |
 | `write.checkSecrets` | true | Refuse to save (or revise) text that looks like it holds a secret |
 | `write.similarity` | 0.5 | `memory_write` names an existing memory in the same project that shares at least this share of its words. 0 turns it off |
 | `summaries.save` | false | Keep compaction summaries as searchable `summary` memories |
 | `summaries.maxChars` | 4000 | Longer summaries are cut |
 | `summaries.keep` | 3 | `/memory-tidy` suggests deleting older summaries beyond this many per project |
+| `compact.maxPerRun` | 25 | Memories `/memory-compact` shortens in one run; it says how many are left |
+| `compact.concurrency` | 3 | Requests to the model that run at once |
 | `backup.everyHours` | 24 | Hours between automatic snapshots. 0 turns them off |
 | `backup.keep` | 20 | Snapshots kept |
 
@@ -100,6 +104,17 @@ The database is `$XDG_DATA_HOME/pi-retainer/retainer.db`, else `~/.local/share/p
 ## What it costs
 
 The tools add about 3,300 characters (roughly 800 tokens) to every request: their names, descriptions and parameters (`node --experimental-strip-types scripts/measure-tools.mjs` prints the figure). Recall adds up to `recall.maxChars` once per conversation. Search results are capped at 30 memories and shortened; `memory_get` returns at most 16,000 characters per call.
+
+## Shortening memories
+
+`/memory-compact` shortens memories over `write.warnChars` characters. With no argument it takes the longest ones in this folder's project and global; give ids (`/memory-compact 12 40`), a project name, or `all` to choose.
+
+1. It tells you how many requests it will make, to which model, and roughly how many tokens, and asks once. Nothing has been sent before that.
+2. It asks the current model, one memory per request, outside your conversation: the memory text never enters your session, and nothing is added to it.
+3. It checks every answer against its original. The short note and the separate notes the model splits off must together still hold every URL, path, `command`, ticket key, version, date, commit hash, flag, `#id`, UPPER_CASE name, number with a unit and quoted phrase of the original. It must also be shorter, within the length limit, keep at least 45% of a long text, and use no long dashes. An answer that fails is **refused and left unchanged**; nothing is applied to make it pass.
+4. It shows one line per memory (`#12 900c -> 280c + 2 new`, or why one was refused) and asks once more before it writes anything. A memory that was edited or deleted while the model worked is skipped, not overwritten.
+
+The separate notes are saved in the same project, with the same tags and the source's kind (or the kind the model gave them). `compact.maxPerRun` (25) caps a run, `compact.concurrency` (3) is how many requests run at once. If the check refuses an answer you think is fine, run it again or shorten that one by hand with `memory_update`; the check does not have a switch, because a rewrite that silently loses a path is the failure it exists to prevent.
 
 ## Checks when saving
 
