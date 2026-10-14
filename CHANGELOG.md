@@ -4,6 +4,12 @@ All notable changes to pi-retainer (called pi-domain until 0.4.0) are listed her
 
 ## [Unreleased]
 
+## [0.4.1]
+
+### Changed
+
+- Published through GitHub Actions with npm trusted publishing and provenance (0.4.0 of pi-retainer was published by hand). No code changes since 0.4.0.
+
 ## [0.4.0]
 
 ### Changed
@@ -57,7 +63,8 @@ First public release.
 - Settings in `pi-domain.json`.
 - Optional pi-halo pairing: halo tool rows, a plain recall row and a sidebar section, through halo's globals only.
 
-[Unreleased]: https://github.com/one24-ai/pi-retainer/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/one24-ai/pi-retainer/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/one24-ai/pi-retainer/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/one24-ai/pi-retainer/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/one24-ai/pi-retainer/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/one24-ai/pi-retainer/compare/v0.1.1...v0.2.0

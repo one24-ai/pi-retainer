@@ -7,8 +7,8 @@ Named after a retainer, the clip that keeps a part in place: it keeps what your 
 Requires pi 1.2 and Node.js 22.19 or later (for `node:sqlite`).
 
 ```bash
-pi install npm:pi-retainer@0.4.0                        # from npm, pinned
-pi install git:github.com/one24-ai/pi-retainer@v0.4.0   # from git, pinned to a tag
+pi install npm:pi-retainer@0.4.1                        # from npm, pinned
+pi install git:github.com/one24-ai/pi-retainer@v0.4.1   # from git, pinned to a tag
 pi install /path/to/pi-retainer                         # a local checkout
 ```
 
