@@ -1,0 +1,33 @@
+{
+  "name": "pi-domain",
+  "version": "0.0.0",
+  "description": "pi-domain is now pi-retainer. This package installs pi-retainer and loads it, so existing installs keep working. Install npm:pi-retainer instead.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Zach Koncir <zach@one24.ai>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/one24-ai/pi-retainer.git",
+    "directory": "compat/pi-domain"
+  },
+  "homepage": "https://github.com/one24-ai/pi-retainer#moving-from-pi-domain",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent"
+  ],
+  "dependencies": {
+    "pi-retainer": "0.0.0"
+  },
+  "bundleDependencies": [
+    "pi-retainer"
+  ],
+  "files": [
+    "README.md"
+  ],
+  "pi": {
+    "extensions": [
+      "node_modules/pi-retainer/extensions/retainer/index.ts"
+    ]
+  }
+}

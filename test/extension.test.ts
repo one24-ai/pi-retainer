@@ -1,7 +1,7 @@
 /**
  * The extension wired to a fake pi around pi's real SessionManager: recall once per context
  * (never again on reload or resume, again after compaction or on another branch), the tools as the
- * model sees them, and the halo pairing.
+ * model sees them, and the chassis pairing.
  */
 
 import assert from "node:assert/strict";
@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, test } from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { MemoryStore } from "../extensions/domain/store.ts";
+import { MemoryStore } from "../extensions/retainer/store.ts";
 
 const REGISTRY = Symbol.for("pi-halo/registry");
 const PENDING = Symbol.for("pi-halo/pendingToolRows");
@@ -20,9 +20,9 @@ let dir: string;
 const saved: Record<string, string | undefined> = {};
 
 beforeEach(() => {
-	dir = mkdtempSync(join(tmpdir(), "pi-domain-ext-"));
-	for (const k of ["PI_DOMAIN_DB", "PI_CODING_AGENT_DIR"]) saved[k] = process.env[k];
-	process.env.PI_DOMAIN_DB = join(dir, "domain.db");
+	dir = mkdtempSync(join(tmpdir(), "pi-retainer-ext-"));
+	for (const k of ["PI_RETAINER_DB", "PI_CODING_AGENT_DIR"]) saved[k] = process.env[k];
+	process.env.PI_RETAINER_DB = join(dir, "retainer.db");
 	process.env.PI_CODING_AGENT_DIR = dir;
 	const g = globalThis as Record<symbol, unknown>;
 	delete g[REGISTRY];
@@ -70,7 +70,7 @@ function fakePi() {
 	};
 	/** A prompt as pi runs it: before_agent_start, then the user message and what the handler added. */
 	const prompt = async (text: string) => {
-		const r = await emit("before_agent_start", { prompt: text, systemPrompt: "", systemPromptOptions: {} });
+		const r = await emit("before_agent_start", { messageType: "user", prompt: text, images: [], systemPrompt: "", systemPromptOptions: {} });
 		const userId = sm.appendMessage({ role: "user", content: text, timestamp: Date.now() } as any);
 		if (r?.message) sm.appendCustomMessageEntry(r.message.customType, r.message.content, r.message.display, r.message.details);
 		return { message: r?.message, userId };
@@ -85,7 +85,7 @@ function fakePi() {
 }
 
 async function load() {
-	const mod = await import(`../extensions/domain/index.ts?${Math.random()}`);
+	const mod = await import(`../extensions/retainer/index.ts?${Math.random()}`);
 	const f = fakePi();
 	mod.default(f.pi);
 	return f;
@@ -94,7 +94,7 @@ async function load() {
 const scopeOf = () => `project:${dir.split("/").pop()}`;
 
 function seed(texts: Array<[string, Partial<{ pinned: boolean; global: boolean; kind: string }>?]>) {
-	const s = new MemoryStore(process.env.PI_DOMAIN_DB!);
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
 	const ids: number[] = [];
 	for (const [text, o = {}] of texts) ids.push(s.write({ scope: o.global ? "global" : scopeOf(), kind: (o.kind ?? "fact") as any, text, pinned: o.pinned }).row.id);
 	s.close();
@@ -117,6 +117,16 @@ test("recall comes with the first prompt, once; a reload or resume does not add 
 		await f.emit("session_start", { reason });
 		assert.equal((await f.prompt(`after ${reason}`)).message, undefined, `not after ${reason}`);
 	}
+	assert.equal(f.recalls(), 1);
+});
+
+test("a run another extension starts with a custom message gets no recall; the next prompt does", async () => {
+	seed([["A fact.", {}]]);
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	const custom = await f.emit("before_agent_start", { messageType: "custom", message: { role: "custom", customType: "other", content: "x" }, systemPrompt: "", systemPromptOptions: {} });
+	assert.equal(custom, undefined);
+	assert.ok((await f.prompt("hello")).message, "recall on the first user prompt");
 	assert.equal(f.recalls(), 1);
 });
 
@@ -167,7 +177,7 @@ test("moving to a branch without the recall brings one on the next prompt", asyn
 
 test("an empty recall is worked out once, and its notice given once", async () => {
 	seed([["x".repeat(2000), { pinned: true }]]);
-	writeFileSync(join(dir, "pi-domain.json"), JSON.stringify({ recall: { maxChars: 500, inlineChars: 10_000 } }));
+	writeFileSync(join(dir, "pi-retainer.json"), JSON.stringify({ recall: { maxChars: 500, inlineChars: 10_000 } }));
 	const f = await load();
 	await f.emit("session_start", { reason: "startup" });
 	assert.equal((await f.prompt("one")).message, undefined);
@@ -181,9 +191,9 @@ test("an empty database recalls nothing", async () => {
 	assert.equal((await f.prompt("hi")).message, undefined);
 });
 
-test("the recall budget from pi-domain.json is respected", async () => {
+test("the recall budget from pi-retainer.json is respected", async () => {
 	seed(Array.from({ length: 60 }, (_, i) => [`Memory ${i}: ${"some words ".repeat(20)}`, {}] as [string, {}]));
-	writeFileSync(join(dir, "pi-domain.json"), JSON.stringify({ recall: { maxChars: 1500 } }));
+	writeFileSync(join(dir, "pi-retainer.json"), JSON.stringify({ recall: { maxChars: 1500 } }));
 	const f = await load();
 	await f.emit("session_start", { reason: "startup" });
 	const { message } = await f.prompt("hi");
@@ -193,7 +203,7 @@ test("the recall budget from pi-domain.json is respected", async () => {
 
 test("a memory matching the first prompt is listed even when it is not recent", async () => {
 	seed([["The flaky widget test needs TZ=UTC to pass.", {}], ...Array.from({ length: 40 }, (_, i) => [`Unrelated note ${i} ${"filler ".repeat(30)}`, {}] as [string, {}])]);
-	writeFileSync(join(dir, "pi-domain.json"), JSON.stringify({ recall: { maxChars: 1200 } }));
+	writeFileSync(join(dir, "pi-retainer.json"), JSON.stringify({ recall: { maxChars: 1200 } }));
 	const f = await load();
 	await f.emit("session_start", { reason: "startup" });
 	assert.match((await f.prompt("the widget test is flaky again")).message.content, /TZ=UTC/);
@@ -244,7 +254,7 @@ test("memory_get stays under its size cap and names exactly what it returned", a
 });
 
 test("another project's memories cannot be read, changed or deleted", async () => {
-	const s = new MemoryStore(process.env.PI_DOMAIN_DB!);
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
 	const other = s.write({ scope: "project:elsewhere", kind: "fact", text: "secret of another project" }).row;
 	s.close();
 	const f = await load();
@@ -252,7 +262,7 @@ test("another project's memories cannot be read, changed or deleted", async () =
 	assert.ok(!(await f.call("memory_get", { ids: [other.id] })).content[0].text.includes("secret"));
 	await assert.rejects(() => f.call("memory_update", { id: other.id, text: "changed" }), /No memory/);
 	await assert.rejects(() => f.call("memory_forget", { id: other.id, reason: "x" }), /No memory/);
-	const check = new MemoryStore(process.env.PI_DOMAIN_DB!);
+	const check = new MemoryStore(process.env.PI_RETAINER_DB!);
 	assert.equal(check.get(other.id)?.text, "secret of another project");
 	check.close();
 });
@@ -276,16 +286,16 @@ test("what the tools cost in every request stays small", async () => {
 	assert.ok(total < 3400, `${total} characters`);
 });
 
-test("without halo: no widget, rows queued for halo, the recall type marked plain", async () => {
+test("without chassis: no widget, rows queued for chassis, the recall type marked plain", async () => {
 	const f = await load();
 	await f.emit("session_start", { reason: "startup" });
 	const g = globalThis as Record<symbol, any>;
 	assert.equal(g[PENDING]?.length, 1);
-	assert.equal(g[PENDING][0].id, "pi-domain");
+	assert.equal(g[PENDING][0].id, "pi-retainer");
 	assert.ok(g[PLAIN].has("memory-recall"));
 });
 
-test("with halo: the sidebar follows recall, this session's memories, resume and branch moves", async () => {
+test("with chassis: the sidebar follows recall, this session's memories, resume and branch moves", async () => {
 	seed([["A fact.", {}], ["Another.", { global: true }]]);
 	let spec: any;
 	let refreshed = 0;
@@ -297,7 +307,7 @@ test("with halo: the sidebar follows recall, this session's memories, resume and
 	};
 	const f = await load();
 	await f.emit("session_start", { reason: "startup" });
-	assert.equal(spec.id, "pi-domain");
+	assert.equal(spec.id, "pi-retainer");
 	const root = f.sm.appendMessage({ role: "user", content: "start", timestamp: 1 } as any);
 	await f.prompt("hi");
 	assert.match(spec.render({}).text, /^2\/2 · /);
@@ -316,10 +326,10 @@ test("with halo: the sidebar follows recall, this session's memories, resume and
 });
 
 test("a malformed settings file is reported and the defaults used", async () => {
-	writeFileSync(join(dir, "pi-domain.json"), "{nope");
+	writeFileSync(join(dir, "pi-retainer.json"), "{nope");
 	const f = await load();
 	await f.emit("session_start", { reason: "startup" });
-	assert.ok(f.notes.some((n) => /ignoring .*pi-domain\.json/.test(n)));
+	assert.ok(f.notes.some((n) => /ignoring .*pi-retainer\.json/.test(n)));
 });
 
 // ------------------------------------------------------------------ work done for another project
@@ -329,7 +339,7 @@ import { mkdirSync } from "node:fs";
 
 /** A fake pi whose session starts in `cwd` (the shared fake uses the temp dir itself). */
 async function loadIn(cwd: string) {
-	const mod = await import(`../extensions/domain/index.ts?${Math.random()}`);
+	const mod = await import(`../extensions/retainer/index.ts?${Math.random()}`);
 	const f = fakePi();
 	f.ctx.cwd = cwd;
 	mod.default(f.pi);
@@ -345,7 +355,7 @@ test("from a plain folder, a memory can be filed under another project, by name 
 	const home = join(dir, "home");
 	mkdirSync(home, { recursive: true });
 	repoAt(join(dir, "git", "kiln"));
-	const s = new MemoryStore(process.env.PI_DOMAIN_DB!);
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
 	s.write({ scope: "project:kiln", kind: "fact", text: "Existing kiln fact." });
 	s.close();
 	const f = await loadIn(home);
@@ -370,14 +380,14 @@ test("from a plain folder, a memory can be filed under another project, by name 
 test("a typo in project is refused and nothing is written", async () => {
 	const home = join(dir, "home");
 	mkdirSync(home, { recursive: true });
-	const s = new MemoryStore(process.env.PI_DOMAIN_DB!);
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
 	s.write({ scope: "project:kiln", kind: "fact", text: "Existing kiln fact." });
 	s.close();
 	const f = await loadIn(home);
 	await f.emit("session_start", { reason: "startup" });
 	await assert.rejects(() => f.call("memory_write", { text: "Typo.", kind: "fact", project: "kilm" }), /no project named kilm has memories \(known: kiln\)/);
 	await assert.rejects(() => f.call("memory_write", { text: "Both.", kind: "fact", project: "kiln", global: true }), /either global or project/);
-	const check = new MemoryStore(process.env.PI_DOMAIN_DB!);
+	const check = new MemoryStore(process.env.PI_RETAINER_DB!);
 	assert.deepEqual(check.scopes(), ["project:kiln"], "no new scope appeared");
 	check.close();
 });
@@ -385,7 +395,7 @@ test("a typo in project is refused and nothing is written", async () => {
 test("project reads, moves and deletes work across projects, and still refuse other projects' ids without it", async () => {
 	const home = join(dir, "home");
 	mkdirSync(home, { recursive: true });
-	const s = new MemoryStore(process.env.PI_DOMAIN_DB!);
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
 	const k = s.write({ scope: "project:kiln", kind: "fact", text: "Kiln runs jobs in containers by default." }).row;
 	const h = s.write({ scope: `project:${home.split("/").pop()}`, kind: "fact", text: "Misfiled: kiln needs a retry policy." }).row;
 	s.close();
@@ -433,9 +443,9 @@ test("/memory-tidy offers to move misfiled memories, and 'all' reaches every pro
 	const home = join(dir, "home");
 	mkdirSync(home, { recursive: true });
 	repoAt(join(dir, "git", "kiln"));
-	process.env.PI_DOMAIN_REPOS = join(dir, "git");
+	process.env.PI_RETAINER_REPOS = join(dir, "git");
 	try {
-		const s = new MemoryStore(process.env.PI_DOMAIN_DB!);
+		const s = new MemoryStore(process.env.PI_RETAINER_DB!);
 		const homeScope = `project:${home.split("/").pop()}`;
 		const mis = s.write({ scope: homeScope, kind: "decision", text: "The executor contract is in ~/git/kiln/docs." }).row;
 		const generic = s.write({ scope: homeScope, kind: "fact", text: "Keybindings need no Shift." }).row;
@@ -450,34 +460,34 @@ test("/memory-tidy offers to move misfiled memories, and 'all' reaches every pro
 		assert.equal(prompts.length, 1, "only the misfiled one, nothing else to suggest");
 		assert.match(prompts[0]!.title, /\(misfiled\)/);
 		assert.deepEqual(prompts[0]!.opts, ["Move to project:kiln", "Make global", "Keep here", "Stop"]);
-		const after = new MemoryStore(process.env.PI_DOMAIN_DB!);
+		const after = new MemoryStore(process.env.PI_RETAINER_DB!);
 		assert.equal(after.get(mis.id)!.scope, "project:kiln");
 		assert.equal(after.get(generic.id)!.scope, homeScope, "a memory that names no project stays");
 		assert.equal(after.get(other.id)!.scope, "project:elsewhere", "other projects are not touched without 'all'");
 		assert.ok(f.notes.some((n) => /moved 1/.test(n)));
 
 		// 'all' looks at every project
-		const s2 = new MemoryStore(process.env.PI_DOMAIN_DB!);
+		const s2 = new MemoryStore(process.env.PI_RETAINER_DB!);
 		const mis2 = s2.write({ scope: "project:elsewhere", kind: "fact", text: "Run it from ~/git/kiln first." }).row;
 		s2.close();
 		prompts.length = 0;
 		await f.commands.get("memory-tidy").handler("all", f.ctx);
-		const check = new MemoryStore(process.env.PI_DOMAIN_DB!);
+		const check = new MemoryStore(process.env.PI_RETAINER_DB!);
 		assert.equal(check.get(mis2.id)!.scope, "project:kiln");
 		assert.ok(f.notes.some((n) => /every project/.test(n)));
 		check.close();
 		after.close();
 	} finally {
-		delete process.env.PI_DOMAIN_REPOS;
+		delete process.env.PI_RETAINER_REPOS;
 	}
 });
 
 test("/memory-tidy: a memory in a real repository's scope is never called misfiled", async () => {
 	repoAt(join(dir, "git", "kiln"));
 	repoAt(join(dir, "git", "tools"));
-	process.env.PI_DOMAIN_REPOS = join(dir, "git");
+	process.env.PI_RETAINER_REPOS = join(dir, "git");
 	try {
-		const s = new MemoryStore(process.env.PI_DOMAIN_DB!);
+		const s = new MemoryStore(process.env.PI_RETAINER_DB!);
 		s.write({ scope: "project:tools", kind: "fact", text: "Compare with ~/git/kiln when changing this." });
 		s.close();
 		const f = await loadIn(join(dir, "git", "tools"));
@@ -485,7 +495,7 @@ test("/memory-tidy: a memory in a real repository's scope is never called misfil
 		await f.commands.get("memory-tidy").handler("", f.ctx);
 		assert.ok(f.notes.some((n) => /Nothing to tidy/.test(n)));
 	} finally {
-		delete process.env.PI_DOMAIN_REPOS;
+		delete process.env.PI_RETAINER_REPOS;
 	}
 });
 
@@ -493,7 +503,7 @@ test("memory_update: project and global together are refused, a text edit with o
 	const home = join(dir, "home");
 	mkdirSync(home, { recursive: true });
 	const homeScope = `project:${home.split("/").pop()}`;
-	const s = new MemoryStore(process.env.PI_DOMAIN_DB!);
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
 	const mine = s.write({ scope: homeScope, kind: "fact", text: "Same words in two places." }).row;
 	s.write({ scope: "project:kiln", kind: "fact", text: "Same words in two places." });
 	const g = s.write({ scope: "global", kind: "fact", text: "A global one." }).row;
@@ -503,7 +513,7 @@ test("memory_update: project and global together are refused, a text edit with o
 	await assert.rejects(() => f.call("memory_update", { id: mine.id, global: true, project: "kiln" }), /either global or project/);
 	// moving into a project that already holds the same text is refused and leaves the memory where it was
 	await assert.rejects(() => f.call("memory_update", { id: mine.id, project: "kiln" }), /already has that text/);
-	const after = new MemoryStore(process.env.PI_DOMAIN_DB!);
+	const after = new MemoryStore(process.env.PI_RETAINER_DB!);
 	assert.equal(after.get(mine.id)!.scope, homeScope);
 	after.close();
 	// a global memory edited with a project named for context stays global
@@ -515,7 +525,7 @@ test("a project named for reading still includes the folder's own project", asyn
 	const home = join(dir, "home");
 	mkdirSync(home, { recursive: true });
 	const homeScope = `project:${home.split("/").pop()}`;
-	const s = new MemoryStore(process.env.PI_DOMAIN_DB!);
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
 	const mine = s.write({ scope: homeScope, kind: "fact", text: "A memory in the home folder." }).row;
 	s.write({ scope: "project:kiln", kind: "fact", text: "A kiln memory." });
 	s.close();
@@ -528,7 +538,7 @@ test("a project named for reading still includes the folder's own project", asyn
 });
 
 test("the long flag follows the length note only, not the words in a scope name", async () => {
-	const s = new MemoryStore(process.env.PI_DOMAIN_DB!);
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
 	s.write({ scope: "project:characters", kind: "fact", text: "Seed." });
 	s.close();
 	const f = await load();
@@ -542,10 +552,10 @@ test("/memory-tidy looks at every row, however many there are, and numbers only 
 	const home = join(dir, "home");
 	mkdirSync(home, { recursive: true });
 	repoAt(join(dir, "git", "kiln"));
-	process.env.PI_DOMAIN_REPOS = join(dir, "git");
+	process.env.PI_RETAINER_REPOS = join(dir, "git");
 	try {
 		const homeScope = `project:${home.split("/").pop()}`;
-		const s = new MemoryStore(process.env.PI_DOMAIN_DB!);
+		const s = new MemoryStore(process.env.PI_RETAINER_DB!);
 		// 250 newer global rows would have crowded a 200-row search
 		const kinds = ["fact", "decision", "gotcha", "preference"] as const;
 		for (let i = 0; i < 250; i++) s.write({ scope: "global", kind: kinds[i % 4]!, text: `Unique-${i.toString(36)}-${(i * 7919).toString(36)}-${(i * 104729).toString(36)}` });
@@ -558,11 +568,11 @@ test("/memory-tidy looks at every row, however many there are, and numbers only 
 		await f.commands.get("memory-tidy").handler("", f.ctx);
 		assert.equal(titles.length, 1);
 		assert.match(titles[0]!, /^Memory tidy 1\/1 \(misfiled\)/);
-		const after = new MemoryStore(process.env.PI_DOMAIN_DB!);
+		const after = new MemoryStore(process.env.PI_RETAINER_DB!);
 		assert.equal(after.get(oldest.id)!.scope, "project:kiln");
 		after.close();
 	} finally {
-		delete process.env.PI_DOMAIN_REPOS;
+		delete process.env.PI_RETAINER_REPOS;
 	}
 });
 
@@ -570,10 +580,10 @@ test("/memory-tidy: Stop ends the pass; without a UI it only lists", async () =>
 	const home = join(dir, "home");
 	mkdirSync(home, { recursive: true });
 	repoAt(join(dir, "git", "kiln"));
-	process.env.PI_DOMAIN_REPOS = join(dir, "git");
+	process.env.PI_RETAINER_REPOS = join(dir, "git");
 	try {
 		const homeScope = `project:${home.split("/").pop()}`;
-		const s = new MemoryStore(process.env.PI_DOMAIN_DB!);
+		const s = new MemoryStore(process.env.PI_RETAINER_DB!);
 		const a = s.write({ scope: homeScope, kind: "fact", text: "First: see ~/git/kiln." }).row;
 		const b = s.write({ scope: homeScope, kind: "fact", text: "Second: see ~/git/kiln too." }).row;
 		s.close();
@@ -583,7 +593,7 @@ test("/memory-tidy: Stop ends the pass; without a UI it only lists", async () =>
 		f.ctx.ui.select = async (_t: string, opts: string[]) => (asked++, opts[opts.length - 1]); // "Stop"
 		await f.commands.get("memory-tidy").handler("", f.ctx);
 		assert.equal(asked, 1, "stopped after the first prompt");
-		const check = new MemoryStore(process.env.PI_DOMAIN_DB!);
+		const check = new MemoryStore(process.env.PI_RETAINER_DB!);
 		assert.equal(check.get(a.id)!.scope, homeScope);
 		assert.equal(check.get(b.id)!.scope, homeScope);
 		check.close();
@@ -599,11 +609,11 @@ test("/memory-tidy: Stop ends the pass; without a UI it only lists", async () =>
 		}
 		assert.match(lines.join("\n"), /2 suggestions .*2 misfiled/);
 		assert.match(lines.join("\n"), new RegExp(`misfiled #${a.id}: ${homeScope} -> project:kiln`));
-		const again = new MemoryStore(process.env.PI_DOMAIN_DB!);
+		const again = new MemoryStore(process.env.PI_RETAINER_DB!);
 		assert.equal(again.get(a.id)!.scope, homeScope, "nothing changed without a UI");
 		again.close();
 	} finally {
-		delete process.env.PI_DOMAIN_REPOS;
+		delete process.env.PI_RETAINER_REPOS;
 	}
 });
 
@@ -623,17 +633,17 @@ test("compaction summaries are not saved by default", async () => {
 	const f = await load();
 	await f.emit("session_start", { reason: "startup" });
 	await f.emit("session_compact", { compactionEntry: { summary: "## Goal\nA long session." }, reason: "threshold" });
-	const s = new MemoryStore(process.env.PI_DOMAIN_DB!);
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
 	assert.equal(s.search({ scopes: s.scopes(), kinds: ["summary"], limit: 10 }).length, 0);
 	s.close();
 });
 
 test("with summaries.save on, a compaction summary is kept as a summary memory, cut at summaries.maxChars", async () => {
-	writeFileSync(join(dir, "pi-domain.json"), JSON.stringify({ summaries: { save: true, maxChars: 300 } }));
+	writeFileSync(join(dir, "pi-retainer.json"), JSON.stringify({ summaries: { save: true, maxChars: 300 } }));
 	const f = await load();
 	await f.emit("session_start", { reason: "startup" });
 	await f.emit("session_compact", { compactionEntry: { summary: `## Goal\n${"x".repeat(1000)}` }, reason: "threshold" });
-	const s = new MemoryStore(process.env.PI_DOMAIN_DB!);
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
 	const rows = s.search({ scopes: s.scopes(), kinds: ["summary"], limit: 10 });
 	assert.equal(rows.length, 1);
 	assert.equal(rows[0]!.scope, scopeOf());

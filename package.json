@@ -1,17 +1,17 @@
 {
-  "name": "pi-domain",
+  "name": "pi-retainer",
   "version": "0.3.0",
-  "description": "Persistent memory for pi: a local SQLite store with tools for the model, a short budgeted recall at the start of each session, compaction summaries kept as searchable notes, daily snapshots, and optional pi-halo rows and sidebar.",
+  "description": "Persistent memory for pi: a local SQLite store with tools for the model, a short budgeted recall at the start of each session, compaction summaries kept as searchable notes, daily snapshots, and optional pi-chassis rows and sidebar.",
   "type": "module",
   "license": "MIT",
   "author": "Zach Koncir <zach@one24.ai>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/one24-ai/pi-domain.git"
+    "url": "git+https://github.com/one24-ai/pi-retainer.git"
   },
-  "homepage": "https://github.com/one24-ai/pi-domain#readme",
+  "homepage": "https://github.com/one24-ai/pi-retainer#readme",
   "bugs": {
-    "url": "https://github.com/one24-ai/pi-domain/issues"
+    "url": "https://github.com/one24-ai/pi-retainer/issues"
   },
   "engines": {
     "node": ">=22.19.0"
@@ -26,7 +26,7 @@
   ],
   "pi": {
     "extensions": [
-      "./extensions/domain/index.ts"
+      "./extensions/retainer/index.ts"
     ]
   },
   "files": [

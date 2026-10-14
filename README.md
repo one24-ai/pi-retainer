@@ -1,15 +1,15 @@
-# pi-domain
+# pi-retainer
 
 Persistent memory for [pi](https://pi.dev). The model saves decisions, preferences, facts and gotchas as it works; the next session starts with a short index of them, and anything else is a search away. Everything stays in one SQLite file on your machine.
 
-Named after the Domain, the Forerunners' store of knowledge and ancestral memory in the Halo universe.
+Named after a retainer, the clip that keeps a part in place: it keeps what your sessions learn. pi-retainer was called pi-domain until 0.4.0 (see [Moving from pi-domain](#moving-from-pi-domain)).
 
-Requires pi 1.1 and Node.js 22.19 or later (for `node:sqlite`).
+Requires pi 1.2 and Node.js 22.19 or later (for `node:sqlite`).
 
 ```bash
-pi install npm:pi-domain@0.3.0                        # from npm, pinned
-pi install git:github.com/one24-ai/pi-domain@v0.3.0   # from git, pinned to a tag
-pi install /path/to/pi-domain                         # a local checkout
+pi install npm:pi-retainer@0.4.0                        # from npm, pinned
+pi install git:github.com/one24-ai/pi-retainer@v0.4.0   # from git, pinned to a tag
+pi install /path/to/pi-retainer                         # a local checkout
 ```
 
 ## How it works
@@ -69,7 +69,7 @@ Memories from earlier sessions (project:my-app and global). Lines ending in [N c
 
 ## Settings
 
-Optional. Put any of these in `~/.pi/agent/pi-domain.json` (or `$PI_CODING_AGENT_DIR/pi-domain.json`). Values are read at session start, checked and clamped; a missing or malformed file means the defaults, with a warning for a malformed one.
+Optional. Put any of these in `~/.pi/agent/pi-retainer.json` (or `$PI_CODING_AGENT_DIR/pi-retainer.json`). Values are read at session start, checked and clamped; a missing or malformed file means the defaults, with a warning for a malformed one.
 
 ```json
 {
@@ -93,7 +93,7 @@ Optional. Put any of these in `~/.pi/agent/pi-domain.json` (or `$PI_CODING_AGENT
 | `backup.everyHours` | 24 | Hours between automatic snapshots. 0 turns them off |
 | `backup.keep` | 20 | Snapshots kept |
 
-The database is `$XDG_DATA_HOME/pi-domain/domain.db`, else `~/.local/share/pi-domain/domain.db`, with snapshots in `backups/` beside it. `PI_DOMAIN_DB=/path/to/file.db` uses another file (its snapshots go beside it too). `/memory-tidy` finds repositories to move memories into under `~/git` (one and two levels down); `PI_DOMAIN_REPOS=/path/a:/path/b` looks there instead.
+The database is `$XDG_DATA_HOME/pi-retainer/retainer.db`, else `~/.local/share/pi-retainer/retainer.db`, with snapshots in `backups/` beside it. `PI_RETAINER_DB=/path/to/file.db` uses another file (its snapshots go beside it too). `/memory-tidy` finds repositories to move memories into under `~/git` (one and two levels down); `PI_RETAINER_REPOS=/path/a:/path/b` looks there instead.
 
 ## What it costs
 
@@ -101,17 +101,32 @@ The tools add about 3,300 characters (roughly 800 tokens) to every request: thei
 
 ## Privacy
 
-pi-domain makes no network requests. Memories are stored in the SQLite file above and are sent only to the model you use, as part of the conversation, like anything else in it. Do not ask it to remember secrets. To remove everything, delete the `pi-domain` data directory.
+pi-retainer makes no network requests. Memories are stored in the SQLite file above and are sent only to the model you use, as part of the conversation, like anything else in it. Do not ask it to remember secrets. To remove everything, delete the `pi-retainer` data directory (and `pi-domain`, if you used pi-retainer under its old name).
 
-## With pi-halo
+## With pi-chassis
 
-pi-domain works the same with or without [pi-halo](https://github.com/one24-ai/pi-halo), and neither package depends on the other. When halo is loaded:
+pi-retainer works the same with or without [pi-chassis](https://github.com/one24-ai/pi-chassis), and neither package depends on the other. When pi-chassis is loaded:
 
-- the memory tools are drawn as halo's one-line rows (`󰧑 Remember fact Use pnpm…   #12 saved`),
+- the memory tools are drawn as pi-chassis's one-line rows (`󰧑 Remember fact Use pnpm…   #12 saved`),
 - the recall message is one plain row (`󰧑 Recall session memories   17 of 32 memories`), expanding to the index,
 - a Memory section in the sidebar shows the recall size (`17/32 · 3.8K/4.0K`: memories listed of those that could be, characters used of the budget) and the memories saved or changed in this session; click one to read it.
 
-Without halo, pi-domain draws its own compact tool rows and a boxed recall message, and shows no sidebar. The pairing goes through the documented globals halo leaves on `globalThis` (see `extensions/domain/halo.ts`), so the two can be installed, updated and removed separately.
+Without pi-chassis, pi-retainer draws its own compact tool rows and a boxed recall message, and shows no sidebar. The pairing goes through the documented globals pi-chassis leaves on `globalThis` (see `extensions/retainer/chassis.ts`), so the two can be installed, updated and removed separately.
+
+## Moving from pi-domain
+
+pi-domain is now pi-retainer. Swap the package and nothing else needs to change:
+
+```bash
+pi remove npm:pi-domain
+pi install npm:pi-retainer
+```
+
+- **Your memories stay where they are.** If `pi-domain/domain.db` exists in the data directory and `pi-retainer/retainer.db` does not, pi-retainer keeps using the old file. It is never moved or copied.
+- **Settings.** `pi-domain.json` is copied to `pi-retainer.json` once, the first time pi-retainer starts without one. Edit `pi-retainer.json` from then on.
+- **Snapshots.** pi-domain's `domain-*.db` snapshots are listed, restored and pruned alongside the new `retainer-*.db` ones.
+- **Environment variables.** `PI_DOMAIN_DB` and `PI_DOMAIN_REPOS` still work; `PI_RETAINER_DB` and `PI_RETAINER_REPOS` win when both are set.
+- **The old package.** Each release also publishes `pi-domain`, which bundles the same pi-retainer and loads it, so an existing `pi install npm:pi-domain` keeps working. It is deprecated; install one or the other, not both, or the memory tools are registered twice.
 
 ## Development
 
@@ -129,7 +144,3 @@ The tests link the installed pi's packages into `node_modules` (`scripts/link-pi
 ## License
 
 MIT
-
-## Trademarks
-
-Halo is a trademark of Microsoft Corporation. pi-domain is an independent project, not affiliated with or endorsed by Microsoft, Xbox Game Studios or Halo Studios; the name is a nod to the fiction and the package uses no Halo artwork, code or game content.

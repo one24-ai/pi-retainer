@@ -56,10 +56,10 @@ export function snapshotLabel(s: SnapshotInfo): string {
 	return `${s.name}  ${s.memories} ${s.memories === 1 ? "memory" : "memories"}`;
 }
 
-/** A snapshot by file name, with or without ".db", or by its date stamp (20261005-125240). */
+/** A snapshot by file name, with or without ".db", or by its date stamp (20261005-125240, either prefix). */
 export function findSnapshot(snaps: SnapshotInfo[], want: string): SnapshotInfo | undefined {
 	const w = want.trim();
-	return snaps.find((s) => s.name === w) ?? snaps.find((s) => s.name === `${w}.db`) ?? snaps.find((s) => s.name === `domain-${w}.db`);
+	return snaps.find((s) => s.name === w) ?? snaps.find((s) => s.name === `${w}.db`) ?? snaps.find((s) => s.name === `retainer-${w}.db`) ?? snaps.find((s) => s.name === `domain-${w}.db`);
 }
 
 function readRows(path: string): RawMemoryRow[] {
@@ -91,7 +91,7 @@ export function restoreSnapshot(store: MemoryStore, livePath: string, dir: strin
 	if (!listBackups(dir).includes(name)) throw new Error(`no snapshot named ${name}`);
 	const from = inspectSnapshot(join(dir, name));
 	if (from.error) throw new Error(`${name} cannot be restored: ${from.error}`);
-	if (from.userVersion !== SCHEMA_VERSION) throw new Error(`${name} has schema version ${from.userVersion}, this pi-domain uses ${SCHEMA_VERSION}`);
+	if (from.userVersion !== SCHEMA_VERSION) throw new Error(`${name} has schema version ${from.userVersion}, this pi-retainer uses ${SCHEMA_VERSION}`);
 	const rows = readRows(from.path);
 	const safety = backupDb(livePath, dir, now, Number.POSITIVE_INFINITY);
 	const { before, after } = store.replaceAll(rows);

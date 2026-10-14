@@ -1,5 +1,5 @@
 /**
- * Scope resolution for pi-domain.
+ * Scope resolution for pi-retainer.
  *
  * A memory belongs to a scope so that recall is relevant: notes about one repo
  * should not surface while working in another. Scopes are resolved from the
@@ -144,8 +144,8 @@ export function findRepos(roots: string[]): Map<string, string> {
 	return found;
 }
 
-/** Where repositories are looked for by default: ~/git, or $PI_DOMAIN_REPOS (a colon-separated list). */
+/** Where repositories are looked for by default: ~/git, or $PI_RETAINER_REPOS (a colon-separated list; $PI_DOMAIN_REPOS, the old name, also works). */
 export function defaultRepoRoots(env: Record<string, string | undefined> = process.env, home: string = homedir()): string[] {
-	const custom = env.PI_DOMAIN_REPOS?.split(":").filter(Boolean);
+	const custom = (env.PI_RETAINER_REPOS || env.PI_DOMAIN_REPOS)?.split(":").filter(Boolean);
 	return custom && custom.length > 0 ? custom : [join(home, "git")];
 }

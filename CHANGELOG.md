@@ -1,8 +1,19 @@
 # Changelog
 
-All notable changes to pi-domain are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org).
+All notable changes to pi-retainer (called pi-domain until 0.4.0) are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org).
 
 ## [Unreleased]
+
+### Changed
+
+- Renamed from pi-domain to pi-retainer: the npm package, the repository (one24-ai/pi-retainer), the extension folder (`extensions/retainer`), the database (`pi-retainer/retainer.db` in the data directory), the settings file (`pi-retainer.json`), snapshot names (`retainer-YYYYMMDD-HHMMSS.db`) and the environment variables (`PI_RETAINER_DB`, `PI_RETAINER_REPOS`). Breaking in name only: everything below keeps working. See "Moving from pi-domain" in the README.
+- pi-halo is now pi-chassis; the docs and comments use the new name. The pairing still goes through the same globals.
+- Requires pi 1.2. Recall still comes with the first user prompt only: runs another extension starts with a custom message, which pi 1.2 now passes through `before_agent_start`, get no recall. Breaking for pi 1.1 users.
+
+### Deprecated
+
+- The pi-domain names. An existing `pi-domain/domain.db` is used where it is until a `pi-retainer/retainer.db` exists (never moved or copied), `pi-domain.json` is copied to `pi-retainer.json` once, `domain-*.db` snapshots are listed, restored and pruned with the new ones, and `PI_DOMAIN_DB` and `PI_DOMAIN_REPOS` still work.
+- The `pi-domain` npm package. Each release also publishes it as a bridge that bundles the same version of pi-retainer and loads its extension, so `pi install npm:pi-domain` keeps working. It will be marked deprecated on npm.
 
 ## [0.3.0]
 
@@ -44,8 +55,8 @@ First public release.
 - Settings in `pi-domain.json`.
 - Optional pi-halo pairing: halo tool rows, a plain recall row and a sidebar section, through halo's globals only.
 
-[Unreleased]: https://github.com/one24-ai/pi-domain/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/one24-ai/pi-domain/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/one24-ai/pi-domain/compare/v0.1.1...v0.2.0
-[0.1.1]: https://github.com/one24-ai/pi-domain/compare/v0.1.0...v0.1.1
-[0.1.0]: https://github.com/one24-ai/pi-domain/releases/tag/v0.1.0
+[Unreleased]: https://github.com/one24-ai/pi-retainer/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/one24-ai/pi-retainer/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/one24-ai/pi-retainer/compare/v0.1.1...v0.2.0
+[0.1.1]: https://github.com/one24-ai/pi-retainer/compare/v0.1.0...v0.1.1
+[0.1.0]: https://github.com/one24-ai/pi-retainer/releases/tag/v0.1.0
