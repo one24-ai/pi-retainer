@@ -7,8 +7,8 @@ Named after a retainer, the clip that keeps a part in place: it keeps what your 
 Requires pi 1.2 and Node.js 22.19 or later (for `node:sqlite`).
 
 ```bash
-pi install npm:pi-retainer@0.4.1                        # from npm, pinned
-pi install git:github.com/one24-ai/pi-retainer@v0.4.1   # from git, pinned to a tag
+pi install npm:pi-retainer@0.5.0                        # from npm, pinned
+pi install git:github.com/one24-ai/pi-retainer@v0.5.0   # from git, pinned to a tag
 pi install /path/to/pi-retainer                         # a local checkout
 ```
 
@@ -74,7 +74,7 @@ Optional. Put any of these in `~/.pi/agent/pi-retainer.json` (or `$PI_CODING_AGE
 ```json
 {
   "recall": { "maxChars": 4000, "maxItems": 20, "globalShare": 0.5, "inlineChars": 300 },
-  "write": { "warnChars": 600 },
+  "write": { "warnChars": 600, "checkSecrets": true, "similarity": 0.5 },
   "summaries": { "save": false, "maxChars": 4000, "keep": 3 },
   "backup": { "everyHours": 24, "keep": 20 }
 }
@@ -87,6 +87,8 @@ Optional. Put any of these in `~/.pi/agent/pi-retainer.json` (or `$PI_CODING_AGE
 | `recall.globalShare` | 0.5 | Share of the budget global memories get before the project has had its turn |
 | `recall.inlineChars` | 300 | Memories up to this long are shown whole, in recall and in search results |
 | `write.warnChars` | 600 | Saving longer text gets a note; `/memory-tidy` suggests shortening. 0 turns both off |
+| `write.checkSecrets` | true | Refuse to save (or revise) text that looks like it holds a secret |
+| `write.similarity` | 0.5 | `memory_write` names an existing memory in the same project that shares at least this share of its words. 0 turns it off |
 | `summaries.save` | false | Keep compaction summaries as searchable `summary` memories |
 | `summaries.maxChars` | 4000 | Longer summaries are cut |
 | `summaries.keep` | 3 | `/memory-tidy` suggests deleting older summaries beyond this many per project |
@@ -98,6 +100,13 @@ The database is `$XDG_DATA_HOME/pi-retainer/retainer.db`, else `~/.local/share/p
 ## What it costs
 
 The tools add about 3,300 characters (roughly 800 tokens) to every request: their names, descriptions and parameters (`node --experimental-strip-types scripts/measure-tools.mjs` prints the figure). Recall adds up to `recall.maxChars` once per conversation. Search results are capped at 30 memories and shortened; `memory_get` returns at most 16,000 characters per call.
+
+## Checks when saving
+
+`memory_write` and `memory_update` look at the text before it is stored:
+
+- **Secrets.** Text that holds an AWS access key id, a GitHub or Slack token, a private key, a JSON web token, a bearer value or a password assignment is refused. The reply names the kind of secret, never repeats it, and suggests saving where the secret lives instead ("the token is in the keyring under service X"). Placeholders (`${VAR}`, `<token>`), commit hashes, fingerprints and paths are not flagged. `write.checkSecrets: false` turns the check off.
+- **Near-duplicates.** If a new memory shares at least half its words with one in the same project, any kind, the reply names it and suggests revising that one with `memory_update` and forgetting the new one. Both are kept; it only warns. Exact repeats are still refreshed, not added.
 
 ## Privacy
 

@@ -4,6 +4,17 @@ All notable changes to pi-retainer (called pi-domain until 0.4.0) are listed her
 
 ## [Unreleased]
 
+## [0.5.0]
+
+### Added
+
+- `memory_write` and `memory_update` refuse text that looks like it holds a secret (an AWS access key id, a GitHub or Slack token, a private key, a JSON web token, a bearer value or a password assignment). The refusal names the kind and never repeats the text. Turn it off with `write.checkSecrets: false`.
+- `memory_write` names an existing memory in the same project that shares at least half its words, and suggests revising it instead of keeping both. `write.similarity` sets the share; 0 turns it off.
+
+### Fixed
+
+- The request `/memory-tidy` sends to the model now says which project memories are in when it is not the folder's, with the `project` or `in` to pass, so shortening and merging work from any folder.
+
 ## [0.4.1]
 
 ### Changed
@@ -63,7 +74,8 @@ First public release.
 - Settings in `pi-domain.json`.
 - Optional pi-halo pairing: halo tool rows, a plain recall row and a sidebar section, through halo's globals only.
 
-[Unreleased]: https://github.com/one24-ai/pi-retainer/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/one24-ai/pi-retainer/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/one24-ai/pi-retainer/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/one24-ai/pi-retainer/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/one24-ai/pi-retainer/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/one24-ai/pi-retainer/compare/v0.2.0...v0.3.0

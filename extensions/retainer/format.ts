@@ -33,6 +33,16 @@ export function lengthNote(text: string, warnChars: number, inlineChars: number)
 	);
 }
 
+/**
+ * A note for memory_write when it saved something close to a memory that already exists: names
+ * them so the model can revise one instead of keeping two. Empty when there are none.
+ */
+export function similarNote(similar: { row: MemoryRow; score: number }[]): string {
+	if (similar.length === 0) return "";
+	const list = similar.map(({ row, score }) => `#${row.id} (${Math.round(score * 100)}% the same words)`).join(", ");
+	return `\nNote: this is close to ${list}. If it says the same thing, revise that one with memory_update and forget the new one with memory_forget instead of keeping both.`;
+}
+
 /** "1 memory", "3 memories". */
 export const memories = (n: number) => `${n} ${n === 1 ? "memory" : "memories"}`;
 

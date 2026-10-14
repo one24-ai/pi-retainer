@@ -6,7 +6,7 @@
  *
  *   {
  *     "recall":    { "maxChars": 4000, "maxItems": 20, "globalShare": 0.5, "inlineChars": 300 },
- *     "write":     { "warnChars": 600 },
+ *     "write":     { "warnChars": 600, "checkSecrets": true, "similarity": 0.5 },
  *     "summaries": { "save": false, "maxChars": 4000, "keep": 3 },
  *     "backup":    { "everyHours": 24, "keep": 20 }
  *   }
@@ -36,6 +36,10 @@ export interface RecallSettings {
 		 * recall.inlineChars regardless.
 		 */
 		warnChars: number;
+		/** Refuse to save text that looks like it holds a secret (a key, token or password). */
+		checkSecrets: boolean;
+		/** memory_write notes an existing memory when the new one shares at least this share of its words. 0 turns it off. */
+		similarity: number;
 	};
 	summaries: {
 		/**
@@ -58,7 +62,7 @@ export interface RecallSettings {
 
 export const DEFAULT_SETTINGS: RecallSettings = {
 	recall: { maxChars: 4000, maxItems: 20, globalShare: 0.5, inlineChars: 300 },
-	write: { warnChars: 600 },
+	write: { warnChars: 600, checkSecrets: true, similarity: 0.5 },
 	summaries: { save: false, maxChars: 4000, keep: 3 },
 	backup: { everyHours: 24, keep: 20 },
 };
@@ -100,7 +104,11 @@ export function parseSettings(raw: unknown): RecallSettings {
 			globalShare: num(r.globalShare, d.recall.globalShare, { min: 0, max: 1 }),
 			inlineChars: num(r.inlineChars, d.recall.inlineChars, { min: 60, max: 10_000, int: true }),
 		},
-		write: { warnChars: num(w.warnChars, d.write.warnChars, { min: 0, max: 100_000, int: true }) },
+		write: {
+			warnChars: num(w.warnChars, d.write.warnChars, { min: 0, max: 100_000, int: true }),
+			checkSecrets: typeof w.checkSecrets === "boolean" ? w.checkSecrets : d.write.checkSecrets,
+			similarity: w.similarity === 0 ? 0 : num(w.similarity, d.write.similarity, { min: 0.2, max: 1 }),
+		},
 		summaries: {
 			save: typeof s.save === "boolean" ? s.save : d.summaries.save,
 			maxChars: num(s.maxChars, d.summaries.maxChars, { min: 200, max: 100_000, int: true }),

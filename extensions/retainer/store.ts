@@ -627,6 +627,27 @@ export class MemoryStore {
 		return (this.db.prepare("SELECT DISTINCT scope FROM memories ORDER BY scope").all() as { scope: string }[]).map((r) => r.scope);
 	}
 
+	/**
+	 * Memories in `scope` that say much the same as `text` (word overlap at or above `threshold`),
+	 * most similar first, for warning a writer before a near-duplicate is saved. Summaries are
+	 * left out, and `exceptId` skips the memory being revised. Same scope, any kind: a gotcha and
+	 * a fact about one thing are still one thing.
+	 */
+	similarTo(scope: string, text: string, options: { threshold?: number; limit?: number; exceptId?: number } = {}): { row: MemoryRow; score: number }[] {
+		const threshold = options.threshold ?? 0.5;
+		const mine = wordSet(text);
+		if (mine.size < 4) return []; // too little to compare: any two short notes would "overlap"
+		const rows = (
+			this.db.prepare("SELECT * FROM memories WHERE scope = ? AND kind != 'summary'").all(scope) as Record<string, unknown>[]
+		).map(toRow);
+		return rows
+			.filter((r) => r.id !== options.exceptId)
+			.map((row) => ({ row, score: jaccard(mine, wordSet(row.text)) }))
+			.filter((x) => x.score >= threshold)
+			.sort((a, b) => b.score - a.score || b.row.id - a.row.id)
+			.slice(0, options.limit ?? 2);
+	}
+
 	/** Several rows by id, in the order given; ids that do not exist are left out. */
 	getMany(ids: number[]): MemoryRow[] {
 		return ids.map((id) => this.get(id)).filter((r): r is MemoryRow => r !== undefined);

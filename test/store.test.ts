@@ -279,3 +279,19 @@ test("tidyCandidates suggests shortening long memories, longest first, but not s
 	assert.equal(s.tidyCandidates([scope]).filter((c) => c.type === "too-long").length, 0, "off unless asked for");
 	s.close();
 });
+
+test("similarTo finds memories in the same project that share most of their words, any kind, best first", () => {
+	const s = newStore();
+	const a = s.write({ scope: "project:p", kind: "fact", text: "The release workflow publishes to npm with trusted publishing and provenance from the version tag." }).row;
+	s.write({ scope: "project:p", kind: "gotcha", text: "Completely different: the database file lives in the data directory." });
+	s.write({ scope: "project:q", kind: "fact", text: "The release workflow publishes to npm with trusted publishing and provenance from the version tag, in this other project." });
+	s.write({ scope: "project:p", kind: "summary", text: "The release workflow publishes to npm with trusted publishing and provenance from the version tag, as a summary." });
+	const text = "Release workflow publishes to npm through trusted publishing, with provenance, from the version tag.";
+	const found = s.similarTo("project:p", text);
+	assert.deepEqual(found.map((x) => x.row.id), [a.id], "other projects and summaries are not counted");
+	assert.ok(found[0]!.score >= 0.5 && found[0]!.score <= 1);
+	assert.deepEqual(s.similarTo("project:p", text, { exceptId: a.id }), [], "the memory being revised is skipped");
+	assert.deepEqual(s.similarTo("project:p", text, { threshold: 0.99 }), []);
+	assert.deepEqual(s.similarTo("project:p", "Use pnpm."), [], "text with too few words is never compared");
+	s.close();
+});
