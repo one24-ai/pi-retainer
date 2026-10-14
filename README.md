@@ -105,7 +105,7 @@ The tools add about 3,300 characters (roughly 800 tokens) to every request: thei
 
 `memory_write` and `memory_update` look at the text before it is stored:
 
-- **Secrets.** Text that holds an AWS access key id, a GitHub or Slack token, a private key, a JSON web token, a bearer value or a password assignment is refused. The reply names the kind of secret, never repeats it, and suggests saving where the secret lives instead ("the token is in the keyring under service X"). Placeholders (`${VAR}`, `<token>`), commit hashes, fingerprints and paths are not flagged. `write.checkSecrets: false` turns the check off.
+- **Secrets.** Text that holds a provider key (AWS, GitHub, Slack, OpenAI, Anthropic, Google, npm, Stripe, GitLab), a private key block, a JSON web token, a password in a URL, a bearer value, or an assignment such as `DB_PASSWORD=...` is refused. The reply names the kind of secret, does not repeat it, and suggests saving where the secret lives instead ("the token is in the keyring under service X"). Placeholders (`${VAR}`, `<token>`), commit hashes, fingerprints, and assignment values that are paths, file names or references (`password: /run/secrets/db1`) are not flagged. It is a safety net, not a guarantee: a secret in an unusual shape passes, and the text has already reached the tool call when it is checked, so a secret that was typed into the chat is still in the session. `write.checkSecrets: false` turns the check off.
 - **Near-duplicates.** If a new memory shares at least half its words with one in the same project, any kind, the reply names it and suggests revising that one with `memory_update` and forgetting the new one. Both are kept; it only warns. Exact repeats are still refreshed, not added.
 
 ## Privacy

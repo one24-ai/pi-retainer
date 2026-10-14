@@ -202,7 +202,7 @@ export default function (pi: ExtensionAPI) {
 				if (found.length > 0) throw new Error(secretRefusal(found));
 			}
 			const scope = writeScope(ctx, params.global, params.project);
-			const existing = openStore().similarTo(scope, params.text, { threshold: settings.write.similarity || 1.01 });
+			const existing = settings.write.similarity > 0 ? openStore().similarTo(scope, params.text, { threshold: settings.write.similarity }) : [];
 			const result = openStore().write({
 				scope,
 				kind: params.kind as MemoryKind,
@@ -682,11 +682,11 @@ export default function (pi: ExtensionAPI) {
 			const folderProject = resolveProjectScope(ctx.cwd).replace(/^project:/, "");
 			const projectNote = (ids: number[]) => {
 				const out = new Map<string, number[]>();
-				for (const id of ids) {
+				for (const id of [...new Set(ids)]) {
 					const p = homeOf(id);
 					if (p && p !== folderProject && s.get(id)?.scope !== GLOBAL_SCOPE) out.set(p, [...(out.get(p) ?? []), id]);
 				}
-				return [...out].map(([p, list]) => `${list.map((i) => `#${i}`).join(", ")} are in the project "${p}" (pass project: "${p}" to memory_get and memory_forget, and in: "${p}" to memory_update)`).join("; ");
+				return [...out].map(([p, list]) => `${list.map((i) => `#${i}`).join(", ")} ${list.length === 1 ? "is" : "are"} in the project "${p}" (pass project: "${p}" to memory_get and memory_forget, and in: "${p}" to memory_update)`).join("; ");
 			};
 			const asks: string[] = [];
 			if (merges.length) {

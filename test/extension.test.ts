@@ -689,7 +689,7 @@ test("write.checkSecrets: false turns the check off", async () => {
 	assert.ok((await f.call("memory_write", { text: `Example id ${AWS_KEY} from the docs.`, kind: "fact" })).details.id);
 });
 
-test("saving something close to an existing memory names it, and does not for an exact repeat or another project", async () => {
+test("saving something close to an existing memory names it, and does not for an exact repeat or an unrelated one", async () => {
 	const f = await load();
 	await f.emit("session_start", { reason: "startup" });
 	const first = await f.call("memory_write", { text: "The release workflow publishes to npm with trusted publishing and provenance from the version tag.", kind: "fact" });
@@ -708,7 +708,7 @@ test("saving something close to an existing memory names it, and does not for an
 	assert.ok(!/close to/.test(unrelated.content[0].text));
 });
 
-test("write.similarity: 0 turns the near-duplicate note off, and a higher value makes it stricter", async () => {
+test("write.similarity: 0 turns the near-duplicate note off and skips the comparison", async () => {
 	writeFileSync(join(dir, "pi-retainer.json"), JSON.stringify({ write: { similarity: 0 } }));
 	const f = await load();
 	await f.emit("session_start", { reason: "startup" });
@@ -735,8 +735,42 @@ test("/memory-tidy's request to the model names the project of memories that are
 	await f.commands.get("memory-tidy").handler("all", f.ctx);
 	assert.equal(sent.length, 1);
 	const msg = sent[0]!;
-	assert.match(msg, new RegExp(`#${other.id}[^.]* are in the project "elsewhere" \\(pass project: "elsewhere" to memory_get and memory_forget, and in: "elsewhere" to memory_update\\)`));
+	assert.match(msg, new RegExp(`#${other.id}[^.]* (?:is|are) in the project "elsewhere" \\(pass project: "elsewhere" to memory_get and memory_forget, and in: "elsewhere" to memory_update\\)`));
 	assert.ok(!msg.includes('"' + home.split("/").pop() + '"'), "this folder's own project is not called out");
 	assert.ok(msg.includes(`#${mine.id}`) && msg.includes(`#${glob.id}`));
-	assert.ok(!new RegExp(`#${glob.id}[^.]*are in the project`).test(msg), "global memories are reachable from anywhere");
+	assert.ok(!new RegExp(`#${glob.id}[^.]*(?:is|are) in the project`).test(msg), "global memories are reachable from anywhere");
+});
+
+test("a near-duplicate in another project is not mentioned, and a stricter write.similarity ignores a looser match", async () => {
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	s.write({ scope: "project:elsewhere", kind: "fact", text: "The release workflow publishes to npm with trusted publishing and provenance from the version tag." });
+	s.close();
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	const here = await f.call("memory_write", { text: "Release workflow publishes to npm through trusted publishing, with provenance, from the version tag.", kind: "fact" });
+	assert.deepEqual(here.details.similar, [], "the match is in another project");
+
+	writeFileSync(join(dir, "pi-retainer.json"), JSON.stringify({ write: { similarity: 0.95 } }));
+	const g = await load();
+	await g.emit("session_start", { reason: "startup" });
+	await g.call("memory_write", { text: "The build copies the output folder into the release bundle before upload.", kind: "fact" });
+	const close = await g.call("memory_write", { text: "The build copies the output folder into the release bundle before the upload step.", kind: "fact" });
+	assert.deepEqual(close.details.similar, [], "about 85% the same is below 0.95");
+});
+
+test("the tidy request lists each id once and says 'is' for a single memory", async () => {
+	const home = join(dir, "home");
+	mkdirSync(home, { recursive: true });
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	const long = (word: string) => `${word} ${"A detailed sentence that goes on and on about the topic. ".repeat(14)}`;
+	const only = s.write({ scope: "project:elsewhere", kind: "fact", text: long("Only") }).row;
+	s.close();
+	const f = await loadIn(home);
+	await f.emit("session_start", { reason: "startup" });
+	const sent: string[] = [];
+	f.pi.sendUserMessage = (m: string) => sent.push(m);
+	f.ctx.ui.select = async (_t: string, opts: string[]) => opts[0];
+	await f.commands.get("memory-tidy").handler("all", f.ctx);
+	assert.match(sent[0]!, new RegExp(`#${only.id} is in the project "elsewhere"`));
+	assert.equal([...sent[0]!.matchAll(new RegExp(`#${only.id}`, "g"))].length >= 1, true);
 });

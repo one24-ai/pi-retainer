@@ -23,6 +23,50 @@ test("unmistakable secrets are recognised, by kind", () => {
 	assert.deepEqual(kinds(`aws ${AWS} and ${GH}`), ["an AWS access key id", "a GitHub token"]);
 });
 
+test("variable names with a prefix are caught: the secret is in the value, not the bare name", () => {
+	const j = (...p: string[]) => p.join("");
+	for (const t of [
+		j("DB_PASS", "WORD=hunter2hunter2x9"),
+		j("STRIPE_API", "_KEY=", "sk8Rj2kQ9xLm4Nv7Pz"),
+		j("AWS_SECRET", "_ACCESS_KEY=", "wJalrXUtnFEMI7MDENGbPxRfiCY2EXAMPLE"),
+		j("MY_SEC", "RET: Zk3mP9qR2vX8nL5t"),
+		j("OPENAI_API", "_KEY=", "abcDEF123ghiJKL456"),
+		j("client", "_secret=", "Zk3mP9qR2vX8nL5t"),
+		j("authorization: bea", "rer ", "abcdefghijklmnopqrstuvwxyz0123456789"),
+	]) assert.ok(kinds(t).length > 0, "should be caught");
+});
+
+test("more provider keys and shapes are recognised", () => {
+	const j = (...p: string[]) => p.join("");
+	assert.deepEqual(kinds(j("sk-", "ant-", "api03-abcdefghijklmnopqrstu")), ["an API key"]);
+	assert.deepEqual(kinds(j("sk-", "a".repeat(40))), ["an API key"]);
+	assert.deepEqual(kinds(j("AI", "zaSyA", "-1234567890abcdefghijklmnopqrstuv")), ["an API key"]);
+	assert.deepEqual(kinds(j("npm", "_", "a".repeat(36))), ["an API key"]);
+	assert.deepEqual(kinds(j("postgres://app:", "s3cretPass9", "@db.example.com:5432/x")), ["a password in a URL"]);
+	assert.deepEqual(kinds(j("-----BEGIN PGP ", "PRIVATE KEY BLOCK", "-----")), ["a private key"]);
+});
+
+test("notes about where a secret lives are not flagged: paths, references and file names", () => {
+	for (const t of [
+		"password: /run/secrets/db1",
+		"secret: ~/.config/app/secret1.json",
+		"api_key: see-keyring-service-v2",
+		"client_secret=azure-keyvault-ref1",
+		"secret: process.env.SECRET_2",
+		"Bearer token-authentication-flow-v2-details",
+		"Bearer /path/to/long/file/name/here1",
+		"AWS_ACCESS_KEY_ID=AKIA-is-the-id-1234567",
+		"token: ${GITHUB_TOKEN}",
+		"password = $DB_PASSWORD1",
+		"credentials: see docs/credentials-setup2.md",
+		"TOKEN_TTL=3600seconds-ok-now1",
+		"postgres://localhost:5432/appdb",
+		"https://user@example.com/path",
+		"ssh://git@github.com/org/repo.git",
+		"PI_RETAINER_DB=/tmp/test-retainer-db1.db",
+	]) assert.deepEqual(kinds(t), [], t);
+});
+
 test("things that merely look technical are not flagged", () => {
 	for (const text of [
 		"Commit 9ad7a11404000852072607bb61a5ca30e3885c7c fixed it.",

@@ -59,3 +59,16 @@ test("a recall budget too small for the header is raised; 0 turns recall off", (
 	assert.equal(parseSettings({ recall: { maxChars: 100 } }).recall.maxChars, 500);
 	assert.equal(parseSettings({ recall: { maxChars: 0 } }).recall.maxChars, 0);
 });
+
+test("write.checkSecrets and write.similarity: defaults, zero, clamping and wrong types", () => {
+	assert.equal(DEFAULT_SETTINGS.write.checkSecrets, true);
+	assert.equal(DEFAULT_SETTINGS.write.similarity, 0.5);
+	assert.equal(parseSettings({ write: { checkSecrets: false } }).write.checkSecrets, false);
+	assert.equal(parseSettings({ write: { checkSecrets: "no" } }).write.checkSecrets, true, "not a boolean: the default");
+	assert.equal(parseSettings({ write: { similarity: 0 } }).write.similarity, 0, "0 turns it off");
+	assert.equal(parseSettings({ write: { similarity: 0.05 } }).write.similarity, 0.2, "raised to the floor");
+	assert.equal(parseSettings({ write: { similarity: -1 } }).write.similarity, 0.2);
+	assert.equal(parseSettings({ write: { similarity: 7 } }).write.similarity, 1, "capped at 1");
+	assert.equal(parseSettings({ write: { similarity: "high" } }).write.similarity, 0.5, "not a number: the default");
+	assert.equal(parseSettings({ write: { similarity: 0.8 } }).write.similarity, 0.8);
+});

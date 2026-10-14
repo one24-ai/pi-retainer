@@ -8,7 +8,7 @@ All notable changes to pi-retainer (called pi-domain until 0.4.0) are listed her
 
 ### Added
 
-- `memory_write` and `memory_update` refuse text that looks like it holds a secret (an AWS access key id, a GitHub or Slack token, a private key, a JSON web token, a bearer value or a password assignment). The refusal names the kind and never repeats the text. Turn it off with `write.checkSecrets: false`.
+- `memory_write` and `memory_update` refuse text that looks like it holds a secret: a provider key (AWS, GitHub, Slack, OpenAI, Anthropic, Google, npm, Stripe, GitLab), a private key block, a JSON web token, a password in a URL, a bearer value, or an assignment such as `DB_PASSWORD=...`. A value that is a path, a file name or a reference (`password: /run/secrets/db1`) is not refused. The refusal names the kind and does not repeat the text. This is on by default, so a save that used to succeed can now fail; turn it off with `write.checkSecrets: false`.
 - `memory_write` names an existing memory in the same project that shares at least half its words, and suggests revising it instead of keeping both. `write.similarity` sets the share; 0 turns it off.
 
 ### Fixed
