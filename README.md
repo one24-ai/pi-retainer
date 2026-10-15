@@ -7,8 +7,8 @@ Named after a retainer, the clip that keeps a part in place: it keeps what your 
 Requires pi 1.2 and Node.js 22.19 or later (for `node:sqlite`).
 
 ```bash
-pi install npm:pi-retainer@0.5.0                        # from npm, pinned
-pi install git:github.com/one24-ai/pi-retainer@v0.5.0   # from git, pinned to a tag
+pi install npm:pi-retainer@0.6.0                        # from npm, pinned
+pi install git:github.com/one24-ai/pi-retainer@v0.6.0   # from git, pinned to a tag
 pi install /path/to/pi-retainer                         # a local checkout
 ```
 
@@ -63,7 +63,8 @@ Memories from earlier sessions (project:my-app and global). Lines ending in [N c
 | `/memory [words]` | List or search memories, with counts per scope and the size of this session's recall |
 | `/memory-pin <id>` | Pin or unpin a memory |
 | `/memory-forget <id>` | Delete a memory, after you confirm |
-| `/memory-tidy [all]` | Step through cleanup suggestions, with a count first: memories filed under a folder that name a project (offered a move to it, or to global), memories that say they supersede others, near-duplicates, "Extends #N" notes to fold in, memories over 600 characters, and old compaction summaries. You choose for each: move, delete, keep, or ask the agent to merge or shorten. It covers this project and global; `all` covers every project |
+| `/memory-tidy [all]` | Local cleanup, never the model. Steps through a count first, then each suggestion: memories filed under a folder that name a project (move them there, or make them global), memories that say they supersede others, near-duplicates, "Extends #N" notes, and old compaction summaries. You choose for each: move, delete or keep. It covers this project and global; `all` covers every project. Long memories are only counted, with a pointer to `/memory-compact` |
+| `/memory-compact [ids \| project \| all]` | Shorten long memories with the model, checked so nothing is lost (see below) |
 | `/memory-backup` | Save a checked snapshot now |
 | `/memory-restore [name]` | Replace all memories with a snapshot, after you confirm |
 
@@ -76,6 +77,7 @@ Optional. Put any of these in `~/.pi/agent/pi-retainer.json` (or `$PI_CODING_AGE
   "recall": { "maxChars": 4000, "maxItems": 20, "globalShare": 0.5, "inlineChars": 300 },
   "write": { "warnChars": 600, "checkSecrets": true, "similarity": 0.5 },
   "summaries": { "save": false, "maxChars": 4000, "keep": 3 },
+  "compact": { "maxPerRun": 25, "concurrency": 3 },
   "backup": { "everyHours": 24, "keep": 20 }
 }
 ```
@@ -86,12 +88,14 @@ Optional. Put any of these in `~/.pi/agent/pi-retainer.json` (or `$PI_CODING_AGE
 | `recall.maxItems` | 20 | Memories listed at most |
 | `recall.globalShare` | 0.5 | Share of the budget global memories get before the project has had its turn |
 | `recall.inlineChars` | 300 | Memories up to this long are shown whole, in recall and in search results |
-| `write.warnChars` | 600 | Saving longer text gets a note; `/memory-tidy` suggests shortening. 0 turns both off |
+| `write.warnChars` | 600 | Saving longer text gets a note, and `/memory-compact` shortens memories over this length. 0 turns the note off, and `/memory-compact` then needs ids |
 | `write.checkSecrets` | true | Refuse to save (or revise) text that looks like it holds a secret |
 | `write.similarity` | 0.5 | `memory_write` names an existing memory in the same project that shares at least this share of its words. 0 turns it off |
 | `summaries.save` | false | Keep compaction summaries as searchable `summary` memories |
 | `summaries.maxChars` | 4000 | Longer summaries are cut |
 | `summaries.keep` | 3 | `/memory-tidy` suggests deleting older summaries beyond this many per project |
+| `compact.maxPerRun` | 25 | Memories `/memory-compact` shortens in one run; it says how many are left |
+| `compact.concurrency` | 3 | Requests to the model that run at once |
 | `backup.everyHours` | 24 | Hours between automatic snapshots. 0 turns them off |
 | `backup.keep` | 20 | Snapshots kept |
 
@@ -100,6 +104,18 @@ The database is `$XDG_DATA_HOME/pi-retainer/retainer.db`, else `~/.local/share/p
 ## What it costs
 
 The tools add about 3,300 characters (roughly 800 tokens) to every request: their names, descriptions and parameters (`node --experimental-strip-types scripts/measure-tools.mjs` prints the figure). Recall adds up to `recall.maxChars` once per conversation. Search results are capped at 30 memories and shortened; `memory_get` returns at most 16,000 characters per call.
+
+## Shortening memories
+
+`/memory-compact` shortens memories over `write.warnChars` characters. With no argument it takes the longest ones in this folder's project and global; give ids (`/memory-compact 12 40`), a project name, or `all` to choose. Summaries are never shortened, and a memory that looks like it holds a secret is never sent to the model.
+
+1. **It asks first.** It says how many memories, which model, roughly how many tokens and from which projects, and waits. Nothing has been sent before that. `Esc` stops a run that has started.
+2. **Where the text goes.** One request per memory to the model you agreed to, made outside your conversation: nothing is added to your session. The memory text is sent to that model's provider like any request, so `all` or a project name sends memories from those projects to it.
+3. **It checks every answer** against its original. The short note and the separate notes the model splits off must together still hold the identifiers of the original: URLs, paths, `commands`, ticket keys, versions, dates, commit hashes, flags, `#ids`, UPPER_CASE and code names, emails, ports, numbers with a unit and quoted phrases. Each must appear as a whole token (`#12` is not satisfied by `#123`). The answer must also be shorter, hold at most six notes (more for a very long memory), stay within the length limit, keep at least 45% of a long text, be no more than 1.5 times the original in total, contain no secret and no long dash. An answer that fails is **refused and left unchanged**.
+4. **What the check does not cover.** It checks identifiers and size. It cannot tell whether the meaning survived, whether a name in plain prose was dropped, or whether the model made something up. That is why you can read each proposal (before and after) before anything is written.
+5. **Then you decide.** One line per memory (`#12 900c -> 280c + 2 new`, or why one was refused), and the choice to apply all the ready ones, read them one by one first, or cancel. A snapshot of the database is taken before the first write; the notice names it, and `/memory-restore <name>` puts everything back. A memory edited, moved or deleted while the model worked is skipped, not overwritten. Each memory and its new notes are saved together or not at all, and the new notes go in the same project, with the same tags and pin as the memory.
+
+`compact.maxPerRun` (25) caps a run; running it again takes the ones it has not tried yet. `compact.concurrency` (3) is how many requests run at once. If the check refuses an answer you think is fine, shorten that one by hand with `memory_update`; the check has no switch, because silently losing a path is the failure it exists to prevent.
 
 ## Checks when saving
 

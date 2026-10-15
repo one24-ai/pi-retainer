@@ -4,6 +4,16 @@ All notable changes to pi-retainer (called pi-domain until 0.4.0) are listed her
 
 ## [Unreleased]
 
+## [0.6.0]
+
+### Added
+
+- `/memory-compact [ids | project | all]` shortens long memories with the model, in one-off requests outside your conversation (the text goes to your model's provider, not into your session). It states the number of requests, the model, a token estimate and the projects involved, and asks first; `Esc` cancels a run. It checks every answer: the short note and the notes split off must hold every URL, path, command, ticket key, version, date, hash, flag, `#id`, UPPER_CASE and code name, email, port, number with a unit and quoted phrase of the original, each as a whole token, and the answer must be shorter, within the length limit, split into a sensible number of notes, free of secrets and not much longer in total. An answer that fails is refused and left unchanged. It shows one line per memory, lets you read every proposal before and after, takes a snapshot of the database before writing and names it so `/memory-restore` can undo the run, and skips a memory that was edited, moved or deleted while the model worked. A memory and its new notes are saved together or not at all; a note that repeats an existing memory is not written and that memory is not touched. Memories that look like they hold a secret and summaries are never sent. `compact.maxPerRun` and `compact.concurrency` set its limits.
+
+### Changed
+
+- **Behaviour change:** `/memory-tidy` no longer uses the model. It does local cleanup only (move misfiled memories, delete superseded ones, old summaries and near-duplicates), counts memories over `write.warnChars` instead of offering to shorten them, and points at `/memory-compact`. The "Ask agent to merge" and "Ask agent to shorten" choices and the message they sent to the conversation are gone.
+
 ## [0.5.0]
 
 ### Added
@@ -74,7 +84,8 @@ First public release.
 - Settings in `pi-domain.json`.
 - Optional pi-halo pairing: halo tool rows, a plain recall row and a sidebar section, through halo's globals only.
 
-[Unreleased]: https://github.com/one24-ai/pi-retainer/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/one24-ai/pi-retainer/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/one24-ai/pi-retainer/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/one24-ai/pi-retainer/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/one24-ai/pi-retainer/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/one24-ai/pi-retainer/compare/v0.3.0...v0.4.0

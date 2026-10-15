@@ -72,3 +72,10 @@ test("write.checkSecrets and write.similarity: defaults, zero, clamping and wron
 	assert.equal(parseSettings({ write: { similarity: "high" } }).write.similarity, 0.5, "not a number: the default");
 	assert.equal(parseSettings({ write: { similarity: 0.8 } }).write.similarity, 0.8);
 });
+
+test("compact settings: defaults and limits", () => {
+	assert.deepEqual(DEFAULT_SETTINGS.compact, { maxPerRun: 25, concurrency: 3 });
+	assert.deepEqual(parseSettings({ compact: { maxPerRun: 1000, concurrency: 99 } }).compact, { maxPerRun: 200, concurrency: 8 });
+	assert.deepEqual(parseSettings({ compact: { maxPerRun: 0, concurrency: -2 } }).compact, { maxPerRun: 1, concurrency: 1 });
+	assert.deepEqual(parseSettings({ compact: { maxPerRun: "many" } }).compact, { maxPerRun: 25, concurrency: 3 });
+});

@@ -60,7 +60,9 @@ function fakePi() {
 		cwd: dir,
 		hasUI: true,
 		isIdle: () => true,
-		ui: { notify: (m: string) => notes.push(m), confirm: async () => true, select: async () => undefined },
+		ui: { notify: (m: string) => notes.push(m), confirm: async () => true, select: async () => undefined, setStatus: () => {}, onTerminalInput: () => () => {} },
+		model: { provider: "test", id: "fake-model" },
+		modelRegistry: { streamSimple: () => ({ result: async () => ({ stopReason: "stop", content: [{ type: "text", text: "{}" }] }) }) },
 		sessionManager: sm,
 	};
 	const emit = async (name: string, event: any = {}) => {
@@ -718,28 +720,6 @@ test("write.similarity: 0 turns the near-duplicate note off and skips the compar
 	assert.ok(!/close to/.test(second.content[0].text));
 });
 
-test("/memory-tidy's request to the model names the project of memories that are not this folder's", async () => {
-	const home = join(dir, "home");
-	mkdirSync(home, { recursive: true });
-	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
-	const long = (word: string) => `${word} ${"A detailed sentence that goes on and on about the topic. ".repeat(14)}`;
-	const other = s.write({ scope: "project:elsewhere", kind: "fact", text: long("Elsewhere") }).row;
-	const mine = s.write({ scope: `project:${home.split("/").pop()}`, kind: "fact", text: long("Mine") }).row;
-	const glob = s.write({ scope: "global", kind: "fact", text: long("Global") }).row;
-	s.close();
-	const f = await loadIn(home);
-	await f.emit("session_start", { reason: "startup" });
-	const sent: string[] = [];
-	f.pi.sendUserMessage = (m: string) => sent.push(m);
-	f.ctx.ui.select = async (_t: string, opts: string[]) => opts[0]; // "Ask agent to shorten"
-	await f.commands.get("memory-tidy").handler("all", f.ctx);
-	assert.equal(sent.length, 1);
-	const msg = sent[0]!;
-	assert.match(msg, new RegExp(`#${other.id}[^.]* (?:is|are) in the project "elsewhere" \\(pass project: "elsewhere" to memory_get and memory_forget, and in: "elsewhere" to memory_update\\)`));
-	assert.ok(!msg.includes('"' + home.split("/").pop() + '"'), "this folder's own project is not called out");
-	assert.ok(msg.includes(`#${mine.id}`) && msg.includes(`#${glob.id}`));
-	assert.ok(!new RegExp(`#${glob.id}[^.]*(?:is|are) in the project`).test(msg), "global memories are reachable from anywhere");
-});
 
 test("a near-duplicate in another project is not mentioned, and a stricter write.similarity ignores a looser match", async () => {
 	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
@@ -758,19 +738,379 @@ test("a near-duplicate in another project is not mentioned, and a stricter write
 	assert.deepEqual(close.details.similar, [], "about 85% the same is below 0.95");
 });
 
-test("the tidy request lists each id once and says 'is' for a single memory", async () => {
-	const home = join(dir, "home");
-	mkdirSync(home, { recursive: true });
+
+// -------------------------------------------------------------------- /memory-tidy and /memory-compact
+
+const longMemory = (head: string) => `${head}: run \`tool --flag\` in ~/git/app/${head.toLowerCase()} (ticket ABC-${head.length + 100}). ${"A detailed sentence that goes on about the topic. ".repeat(20)}`;
+
+/** A model that gives each memory a short opening and moves the rest into separate notes, keeping every identifier. */
+function fakeModel(f: Awaited<ReturnType<typeof load>>, calls: string[] = []) {
+	f.ctx.modelRegistry.streamSimple = (_m: unknown, c: { messages: Array<{ content: string }> }) => ({
+		result: async () => {
+			const text = c.messages[0]!.content.split("\n\n").slice(1).join("\n\n");
+			calls.push(text.slice(0, 20));
+			const ids = [...new Set(text.match(/`[^`]+`|~\/[^\s)]+|ABC-\d+/g) ?? [])];
+			const cut = Math.floor(text.length * 0.2);
+			const rest = text.slice(cut).trim().match(/.{1,420}/gs) ?? [];
+			return { stopReason: "stop", content: [{ type: "text", text: JSON.stringify({ text: `${text.slice(0, cut).trim()} ${ids.join(" ")}`.slice(0, 440), splits: rest.map((t) => ({ kind: "fact", text: t })) }) }] };
+		},
+	});
+	return calls;
+}
+
+test("/memory-tidy no longer uses the model: long memories are counted and pointed at /memory-compact", async () => {
 	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
-	const long = (word: string) => `${word} ${"A detailed sentence that goes on and on about the topic. ".repeat(14)}`;
-	const only = s.write({ scope: "project:elsewhere", kind: "fact", text: long("Only") }).row;
+	s.write({ scope: scopeOf(), kind: "fact", text: longMemory("Alpha") });
 	s.close();
-	const f = await loadIn(home);
+	const f = await load();
 	await f.emit("session_start", { reason: "startup" });
 	const sent: string[] = [];
 	f.pi.sendUserMessage = (m: string) => sent.push(m);
+	let asked = 0;
+	f.ctx.ui.select = async () => (asked++, "Stop");
+	await f.commands.get("memory-tidy").handler("", f.ctx);
+	assert.equal(asked, 0, "a long memory is not a tidy suggestion any more");
+	assert.deepEqual(sent, [], "tidy never sends a message to the model");
+	assert.ok(f.notes.some((n) => /1 memory is over 600 characters: \/memory-compact shortens them with the model/.test(n)), f.notes.join(" | "));
+});
+
+test("/memory-tidy never offers to merge with the model; it deletes or keeps, and points at /memory-compact", async () => {
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	s.write({ scope: scopeOf(), kind: "fact", text: "The release workflow publishes to npm with trusted publishing and provenance from the version tag in CI." });
+	s.write({ scope: scopeOf(), kind: "fact", text: "The release workflow publishes to npm with trusted publishing and provenance from the version tag in CI today." });
+	s.close();
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	const prompts: Array<{ title: string; opts: string[] }> = [];
+	f.ctx.ui.select = async (title: string, opts: string[]) => (prompts.push({ title, opts }), "Keep both");
+	f.pi.sendUserMessage = () => assert.fail("tidy must not message the model");
+	await f.commands.get("memory-tidy").handler("", f.ctx);
+	assert.equal(prompts.length, 1);
+	assert.deepEqual(prompts[0]!.opts, ["Delete", "Keep both", "Stop"]);
+	assert.match(prompts[0]!.title, /\/memory-compact can merge these/);
+});
+
+test("/memory-compact: asks once, shows the results, applies the ready ones, and leaves the conversation alone", async () => {
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	const a = s.write({ scope: scopeOf(), kind: "fact", text: longMemory("Alpha") }).row;
+	const b = s.write({ scope: scopeOf(), kind: "decision", text: longMemory("Beta") }).row;
+	s.write({ scope: scopeOf(), kind: "fact", text: "A short memory that is not touched." });
+	s.close();
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	const calls = fakeModel(f);
+	const asked: Array<{ title: string; message: string }> = [];
+	f.ctx.ui.confirm = async (title: string, message: string) => (asked.push({ title, message }), true);
+	let summary = "";
+	f.ctx.ui.select = async (title: string, opts: string[]) => ((summary = title), opts[0]);
+	f.pi.sendUserMessage = () => assert.fail("compact must not message the model");
+	const sentCustom: unknown[] = [];
+	f.pi.sendMessage = (m: unknown) => sentCustom.push(m);
+	const entriesBefore = f.sm.getEntries().length;
+
+	await f.commands.get("memory-compact").handler("", f.ctx);
+
+	assert.equal(calls.length, 2, "one request per long memory");
+	assert.match(asked[0]!.title, /Shorten 2 memories/);
+	assert.match(asked[0]!.message, /sends the text of these 2 memories to test\/fake-model, in 2 separate requests/);
+	assert.match(asked[0]!.message, /not part of your conversation/);
+	assert.match(asked[0]!.message, /snapshot of the database is taken before anything is written/);
+	assert.match(summary, /2 ready, 0 refused or failed/);
+	assert.match(summary, new RegExp(`#${a.id} \\d+c -> \\d+c \\+ \\d+ new`));
+	const after = new MemoryStore(process.env.PI_RETAINER_DB!);
+	assert.ok(after.get(a.id)!.text.length < 450 && after.get(b.id)!.text.length < 450);
+	assert.ok(after.get(a.id)!.text.includes("~/git/app/alpha"), "the identifier survives");
+	assert.equal(after.get(b.id)!.kind, "decision");
+	const splitKinds = after.inScopes([scopeOf()]).filter((r) => r.sessionId === f.sm.getSessionId() && r.id > b.id + 1);
+	assert.ok(splitKinds.length >= 2 && splitKinds.every((r) => r.kind === "fact"));
+	assert.ok(f.notes.some((n) => /Memory compact: shortened 2, added \d+/.test(n)), f.notes.join(" | "));
+	assert.equal(sentCustom.length, 0);
+	assert.equal(f.sm.getEntries().length, entriesBefore, "nothing was added to the session");
+	after.close();
+});
+
+test("/memory-compact: cancelling at either question writes nothing", async () => {
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	const a = s.write({ scope: scopeOf(), kind: "fact", text: longMemory("Alpha") }).row;
+	s.close();
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	const calls = fakeModel(f);
+	f.ctx.ui.confirm = async () => false;
+	await f.commands.get("memory-compact").handler("", f.ctx);
+	assert.equal(calls.length, 0, "no request is made before the first confirmation");
+
+	f.ctx.ui.confirm = async () => true;
+	f.ctx.ui.select = async (_t: string, opts: string[]) => opts[opts.length - 1]; // Cancel
+	await f.commands.get("memory-compact").handler("", f.ctx);
+	assert.equal(calls.length, 1, "asked once, then the person cancelled");
+	const check = new MemoryStore(process.env.PI_RETAINER_DB!);
+	assert.equal(check.get(a.id)!.text, longMemory("Alpha"));
+	assert.equal(check.stats().reduce((n, x) => n + x.count, 0), 1);
+	check.close();
+});
+
+test("/memory-compact: a rewrite that drops something is shown as refused and never applied", async () => {
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	const a = s.write({ scope: scopeOf(), kind: "fact", text: longMemory("Alpha") }).row;
+	const b = s.write({ scope: scopeOf(), kind: "fact", text: longMemory("Beta") }).row;
+	s.close();
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	const good = fakeModel(f);
+	const goodStream = f.ctx.modelRegistry.streamSimple;
+	let n = 0;
+	f.ctx.modelRegistry.streamSimple = (m: unknown, c: { messages: Array<{ content: string }> }) => (n++ === 0
+		? { result: async () => ({ stopReason: "stop", content: [{ type: "text", text: JSON.stringify({ text: "Alpha: a thing about the app.", splits: [] }) }] }) }
+		: goodStream(m, c));
+	let summary = "";
+	f.ctx.ui.select = async (title: string, opts: string[]) => ((summary = title), opts[0]);
+	await f.commands.get("memory-compact").handler("", f.ctx);
+	assert.match(summary, /1 ready, 1 refused or failed/);
+	assert.match(summary, /REFUSED, drops/);
+	const after = new MemoryStore(process.env.PI_RETAINER_DB!);
+	const texts = [a, b].map((r) => after.get(r.id)!.text);
+	assert.equal(texts.filter((t) => t === longMemory("Alpha") || t === longMemory("Beta")).length, 1, "exactly one was left unchanged");
+	after.close();
+	void good;
+});
+
+test("/memory-compact takes ids, a project name or 'all'; unknown ones are reported", async () => {
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	const mine = s.write({ scope: scopeOf(), kind: "fact", text: longMemory("Mine") }).row;
+	const other = s.write({ scope: "project:elsewhere", kind: "fact", text: longMemory("Other") }).row;
+	const short = s.write({ scope: scopeOf(), kind: "fact", text: "Short but named by id, so it is still shortened." }).row;
+	s.close();
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	const titles: string[] = [];
+	f.ctx.ui.confirm = async (title: string) => (titles.push(title), false);
+	await f.commands.get("memory-compact").handler("", f.ctx);
+	assert.match(titles.at(-1)!, /Shorten 1 memory in /);
+	await f.commands.get("memory-compact").handler("elsewhere", f.ctx);
+	assert.match(titles.at(-1)!, /Shorten 1 memory in project:elsewhere and global/);
+	await f.commands.get("memory-compact").handler("all", f.ctx);
+	assert.match(titles.at(-1)!, /Shorten 2 memories in every project/);
+	await f.commands.get("memory-compact").handler(`${other.id} ${short.id} 9999`, f.ctx);
+	assert.match(titles.at(-1)!, /Shorten 2 memories in #/);
+	assert.ok(f.notes.some((n) => /No memory #9999/.test(n)));
+	await f.commands.get("memory-compact").handler("nosuchproject", f.ctx);
+	assert.ok(f.notes.some((n) => /no project named nosuchproject/.test(n)));
+	void mine;
+});
+
+test("/memory-compact: nothing long, no UI and no model are each said plainly", async () => {
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	await f.commands.get("memory-compact").handler("", f.ctx);
+	assert.ok(f.notes.some((n) => /Nothing to shorten in .*no memory is over 600 characters/.test(n)));
+
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	s.write({ scope: scopeOf(), kind: "fact", text: longMemory("Alpha") });
+	s.close();
+	f.ctx.model = undefined;
+	await f.commands.get("memory-compact").handler("", f.ctx);
+	assert.ok(f.notes.some((n) => /needs a model/.test(n)));
+	f.ctx.model = { provider: "test", id: "fake-model" };
+	f.ctx.hasUI = false;
+	await f.commands.get("memory-compact").handler("", f.ctx);
+	assert.ok(f.notes.some((n) => /only runs in the interactive UI/.test(n)));
+});
+
+test("/memory-compact caps a run at compact.maxPerRun and says how many are left", async () => {
+	writeFileSync(join(dir, "pi-retainer.json"), JSON.stringify({ compact: { maxPerRun: 2 } }));
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	for (const h of ["Alpha", "Beta", "Gamma", "Delta"]) s.write({ scope: scopeOf(), kind: "fact", text: longMemory(h) });
+	s.close();
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	let message = "";
+	f.ctx.ui.confirm = async (_t: string, m: string) => ((message = m), false);
+	await f.commands.get("memory-compact").handler("", f.ctx);
+	assert.match(message, /in 2 separate requests/);
+	assert.match(message, /2 more are over the limit; run it again for them/);
+});
+
+test("/memory-compact reaches memories in another project from any folder, by id, with no project argument", async () => {
+	const home = join(dir, "home");
+	mkdirSync(home, { recursive: true });
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	const other = s.write({ scope: "project:elsewhere", kind: "fact", text: longMemory("Other") }).row;
+	s.close();
+	const f = await loadIn(home);
+	await f.emit("session_start", { reason: "startup" });
+	fakeModel(f);
 	f.ctx.ui.select = async (_t: string, opts: string[]) => opts[0];
-	await f.commands.get("memory-tidy").handler("all", f.ctx);
-	assert.match(sent[0]!, new RegExp(`#${only.id} is in the project "elsewhere"`));
-	assert.equal([...sent[0]!.matchAll(new RegExp(`#${only.id}`, "g"))].length >= 1, true);
+	await f.commands.get("memory-compact").handler(String(other.id), f.ctx);
+	const after = new MemoryStore(process.env.PI_RETAINER_DB!);
+	assert.ok(after.get(other.id)!.text.length < 450, "shortened in place");
+	assert.equal(after.get(other.id)!.scope, "project:elsewhere", "and still in its project");
+	assert.ok(after.inScopes(["project:elsewhere"]).length > 1, "the split-off notes are in the same project");
+	after.close();
+});
+
+test("with write.warnChars at 0, /memory-compact without ids does nothing; with ids it still works", async () => {
+	writeFileSync(join(dir, "pi-retainer.json"), JSON.stringify({ write: { warnChars: 0 } }));
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	const a = s.write({ scope: scopeOf(), kind: "fact", text: longMemory("Alpha") }).row;
+	s.write({ scope: scopeOf(), kind: "fact", text: "A short memory that must not be sent to the model." });
+	s.close();
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	const calls = fakeModel(f);
+	const titles: string[] = [];
+	f.ctx.ui.confirm = async (t: string) => (titles.push(t), false);
+	await f.commands.get("memory-compact").handler("", f.ctx);
+	assert.equal(titles.length, 0);
+	assert.ok(f.notes.some((n) => /write\.warnChars is 0/.test(n)));
+	await f.commands.get("memory-compact").handler(String(a.id), f.ctx);
+	assert.match(titles[0]!, /Shorten 1 memory in #/);
+	assert.equal(calls.length, 0, "declined at the question: no request was made");
+});
+
+// ------------------------------------------------------------ /memory-compact: review fixes
+
+test("a snapshot is taken before anything is written, and the notice says how to undo", async () => {
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	const a = s.write({ scope: scopeOf(), kind: "fact", text: longMemory("Alpha") }).row;
+	s.close();
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	fakeModel(f);
+	f.ctx.ui.select = async (_t: string, opts: string[]) => opts[0];
+	const { readdirSync } = await import("node:fs");
+	const before = readdirSync(join(dir, "backups")).filter((n) => n.startsWith("retainer-")).length;
+	await f.commands.get("memory-compact").handler("", f.ctx);
+	const names = readdirSync(join(dir, "backups")).filter((n) => n.startsWith("retainer-"));
+	assert.equal(names.length, before + 1);
+	const snap = new MemoryStore(join(dir, "backups", names.sort().at(-1)!));
+	assert.equal(snap.get(a.id)!.text, longMemory("Alpha"), "the snapshot holds the text from before the change");
+	snap.close();
+	assert.ok(f.notes.some((n) => /Undo with \/memory-restore retainer-\d{8}-\d{6}(?:-\d+)?\.db/.test(n)), f.notes.join(" | "));
+});
+
+test("a failed request says why, instead of 'no answer'", async () => {
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	s.write({ scope: scopeOf(), kind: "fact", text: longMemory("Alpha") });
+	s.close();
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	f.ctx.modelRegistry.streamSimple = () => ({ result: async () => ({ stopReason: "error", errorMessage: "429 rate limit exceeded", content: [] }) });
+	let shown = "";
+	f.ctx.ui.select = async (t: string, opts: string[]) => ((shown = t), opts[0]);
+	await f.commands.get("memory-compact").handler("", f.ctx);
+	assert.match(shown, /nothing can be applied/);
+	assert.match(shown, /429 rate limit exceeded/);
+});
+
+test("Esc during a run cancels it; what finished is still shown and nothing is written without a confirmation", async () => {
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	for (const h of ["Alpha", "Beta", "Gamma", "Delta"]) s.write({ scope: scopeOf(), kind: "fact", text: longMemory(h) });
+	s.close();
+	writeFileSync(join(dir, "pi-retainer.json"), JSON.stringify({ compact: { concurrency: 1 } }));
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	let listener: ((d: string) => unknown) | undefined;
+	f.ctx.ui.onTerminalInput = (fn: (d: string) => unknown) => ((listener = fn), () => (listener = undefined));
+	const good = fakeModel(f);
+	const stream = f.ctx.modelRegistry.streamSimple;
+	let n = 0;
+	f.ctx.modelRegistry.streamSimple = (m: unknown, c: any) => (++n === 2 ? (listener?.("\u001b"), stream(m, c)) : stream(m, c));
+	let shown = "";
+	f.ctx.ui.select = async (t: string, opts: string[]) => ((shown = t), opts[opts.length - 1]); // Cancel
+	await f.commands.get("memory-compact").handler("", f.ctx);
+	assert.ok(good.length < 4, `${good.length} requests: it stopped early`);
+	assert.ok(f.notes.some((n) => /cancelled after \d of 4/.test(n)), f.notes.join(" | "));
+	assert.equal(listener, undefined, "the key listener is removed");
+	const check = new MemoryStore(process.env.PI_RETAINER_DB!);
+	assert.equal(check.inScopes([scopeOf()]).filter((r) => r.text.length > 800).length, 4, "nothing was changed");
+	check.close();
+});
+
+test("every ready proposal can be read before applying, one by one", async () => {
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	for (const h of ["Alpha", "Beta", "Gamma"]) s.write({ scope: scopeOf(), kind: "fact", text: longMemory(h) });
+	s.close();
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	fakeModel(f);
+	const seen: string[] = [];
+	f.ctx.ui.select = async (t: string, opts: string[]) => {
+		seen.push(t);
+		if (opts.includes("Read each one first")) return "Read each one first";
+		if (opts[0]?.startsWith("Next")) return opts[0];
+		return "Cancel"; // after reading the last one
+	};
+	await f.commands.get("memory-compact").handler("", f.ctx);
+	const details = seen.filter((t) => /BEFORE \(/.test(t));
+	assert.equal(details.length, 3, "all three proposals were shown, not just the first");
+	assert.ok(details.every((t, i) => t.includes(`(${i + 1}/3)`) && /AFTER \(/.test(t) && /NEW \(/.test(t)));
+	const check = new MemoryStore(process.env.PI_RETAINER_DB!);
+	assert.equal(check.inScopes([scopeOf()]).filter((r) => r.text.length > 800).length, 3, "cancelling after reading writes nothing");
+	check.close();
+});
+
+test("memories that hold a secret are never sent to the model, and summaries are not shortened", async () => {
+	const key = ["AKIA", "IOSFODNN7EXAMPLE"].join("");
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	const clean = s.write({ scope: scopeOf(), kind: "fact", text: longMemory("Clean") }).row;
+	const leaky = s.write({ scope: scopeOf(), kind: "fact", text: `${longMemory("Leaky")} The key is ${key}.` }).row;
+	const summary = s.write({ scope: scopeOf(), kind: "summary", text: longMemory("Summary") }).row;
+	s.close();
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	const sent: string[] = [];
+	f.ctx.modelRegistry.streamSimple = (_m: unknown, c: any) => ({ result: async () => (sent.push(c.messages[0].content), { stopReason: "stop", content: [{ type: "text", text: "{}" }] }) });
+	f.ctx.ui.confirm = async () => true;
+	f.ctx.ui.select = async (_t: string, opts: string[]) => opts[opts.length - 1];
+	await f.commands.get("memory-compact").handler(`${clean.id} ${leaky.id} ${summary.id}`, f.ctx);
+	assert.equal(sent.length, 1, "only the clean memory was sent");
+	assert.ok(!sent.some((m) => m.includes(key)), "the secret never reached the model");
+	assert.ok(f.notes.some((n) => new RegExp(`Not sent to the model.*#${leaky.id}`).test(n)));
+	assert.ok(f.notes.some((n) => new RegExp(`Summaries are not shortened: #${summary.id}`).test(n)));
+});
+
+test("running it again reaches the memories it has not tried, not the same refused ones", async () => {
+	writeFileSync(join(dir, "pi-retainer.json"), JSON.stringify({ compact: { maxPerRun: 2 } }));
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	const rows = ["Alpha", "Beta", "Gamma", "Delta"].map((h, i) => s.write({ scope: scopeOf(), kind: "fact", text: longMemory(h).padEnd(1200 + i * 100, "x") }).row);
+	s.close();
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	const asked: string[][] = [];
+	f.ctx.modelRegistry.streamSimple = (_m: unknown, c: any) => ({ result: async () => (asked.at(-1)!.push(c.messages[0].content.split("\n\n")[1].slice(0, 6)), { stopReason: "stop", content: [{ type: "text", text: '{"text":"Nope.","splits":[]}' }] }) });
+	f.ctx.ui.confirm = async () => (asked.push([]), true);
+	f.ctx.ui.select = async (_t: string, opts: string[]) => opts[opts.length - 1];
+	await f.commands.get("memory-compact").handler("", f.ctx);
+	await f.commands.get("memory-compact").handler("", f.ctx);
+	const first = new Set(asked[0]);
+	const second = new Set(asked[1]);
+	assert.equal(first.size + second.size, 4, "the second run took the other two");
+	for (const x of second) assert.ok(!first.has(x));
+	void rows;
+});
+
+test("the request goes to the model the person agreed to, even if another is selected meanwhile", async () => {
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	s.write({ scope: scopeOf(), kind: "fact", text: longMemory("Alpha") });
+	s.close();
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	const used: string[] = [];
+	f.ctx.modelRegistry.streamSimple = (m: any) => ({ result: async () => (used.push(m.id), { stopReason: "stop", content: [{ type: "text", text: "{}" }] }) });
+	f.ctx.ui.confirm = async () => ((f.ctx.model = { provider: "other", id: "different-model" }), true);
+	f.ctx.ui.select = async (_t: string, opts: string[]) => opts[opts.length - 1];
+	await f.commands.get("memory-compact").handler("", f.ctx);
+	assert.deepEqual(used, ["fake-model"]);
+});
+
+test("ids given with other words: the words are ignored and the person is told", async () => {
+	const s = new MemoryStore(process.env.PI_RETAINER_DB!);
+	const a = s.write({ scope: scopeOf(), kind: "fact", text: longMemory("Alpha") }).row;
+	s.close();
+	const f = await load();
+	await f.emit("session_start", { reason: "startup" });
+	f.ctx.ui.confirm = async () => false;
+	await f.commands.get("memory-compact").handler(`all ${a.id} extra`, f.ctx);
+	assert.ok(f.notes.some((n) => /ignoring "all extra" because ids were given/.test(n)), f.notes.join(" | "));
 });

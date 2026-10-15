@@ -1,6 +1,6 @@
 {
   "name": "pi-retainer",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Persistent memory for pi: a local SQLite store with tools for the model, a short budgeted recall at the start of each session, compaction summaries kept as searchable notes, daily snapshots, and optional pi-chassis rows and sidebar.",
   "type": "module",
   "license": "MIT",

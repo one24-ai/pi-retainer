@@ -9,7 +9,8 @@
  *    the rest.
  *  - With summaries.save on, compaction summaries are kept as searchable notes; a snapshot of the
  *    database is taken daily.
- *  - Commands: /memory, /memory-forget, /memory-pin, /memory-tidy, /memory-backup, /memory-restore.
+ *  - Commands: /memory, /memory-forget, /memory-pin, /memory-tidy (local cleanup), /memory-compact
+ *    (shortening, with the model), /memory-backup, /memory-restore.
  *  - With pi-chassis loaded: chassis-styled tool rows and a sidebar section (see chassis.ts). Optional.
  *
  * Memories are scoped per git repository with a shared `global` scope (scope.ts). The database is
@@ -29,6 +30,7 @@ import { recallRenderer } from "./recall-row.ts";
 import { findSnapshot, listSnapshots, restoreSnapshot, snapshotLabel } from "./restore.ts";
 import { defaultRepoRoots, findRepos, GLOBAL_SCOPE, isInGitRepo, resolveProject, resolveProjectScope, resolveReadScopes } from "./scope.ts";
 import { findMisfiled } from "./misfiled.ts";
+import { apply, estimate, line, pickLong, proposeAll } from "./compactor.ts";
 import { findSecrets, secretRefusal } from "./secrets.ts";
 import { DEFAULT_SETTINGS, loadSettings, type RecallSettings, settingsPath } from "./settings.ts";
 import { MEMORY_KINDS, type MemoryKind, type MemoryRow, MemoryStore } from "./store.ts";
@@ -586,7 +588,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("memory-tidy", {
-		description: "Move misfiled memories, then review overlapping, long and old ones (/memory-tidy [all])",
+		description: "Local cleanup, no model: move misfiled memories, delete superseded and old ones (/memory-tidy [all])",
 		getArgumentCompletions: (prefix) => ("all".startsWith(prefix.trim()) ? [{ value: "all", label: "all", description: "every project, not just this one" }] : null),
 		handler: async (args, ctx) => {
 			const s = openStore();
@@ -603,10 +605,14 @@ export default function (pi: ExtensionAPI) {
 				(scope) => !repos.has(scope.slice("project:".length)) && !(inRepo && scope === here),
 				[...repos.keys()],
 			);
-			const candidates = s.tidyCandidates(scopes, { keepSummaries: settings.summaries.keep, longChars: settings.write.warnChars });
+			// Shortening is /memory-compact, which uses the model; tidy never does.
+			const all = s.tidyCandidates(scopes, { keepSummaries: settings.summaries.keep, longChars: settings.write.warnChars });
+			const candidates = all.filter((c) => c.type !== "too-long");
+			const long = all.length - candidates.length;
 			const total = misfiled.length + candidates.length;
 			const where = everywhere ? "every project" : scopes.join(" and ");
-			if (total === 0) return ctx.ui.notify(`Nothing to tidy in ${where}.`, "info");
+			const compactHint = long > 0 ? ` ${long} ${long === 1 ? "memory is" : "memories are"} over ${settings.write.warnChars} characters: /memory-compact shortens them with the model.` : "";
+			if (total === 0) return ctx.ui.notify(`Nothing to tidy in ${where}.${compactHint}`, "info");
 			const counts = new Map<string, number>();
 			for (const c of candidates) counts.set(c.type, (counts.get(c.type) ?? 0) + 1);
 			const summary = [...(misfiled.length ? [`${misfiled.length} misfiled`] : []), ...[...counts].map(([t, n]) => `${n} ${t}`)].join(", ");
@@ -615,14 +621,12 @@ export default function (pi: ExtensionAPI) {
 				console.log([`${total} suggestions in ${where}: ${summary}`, ...misfiled.map((m) => `misfiled #${m.row.id}: ${m.row.scope} -> ${m.to} (${m.evidence})`), ...candidates.map((c) => `${c.type} #${c.drop.id}: ${c.reason}`)].join("\n"));
 				return;
 			}
-			ctx.ui.notify(`Memory tidy in ${where}: ${total} suggestions (${summary}).${everywhere ? "" : " /memory-tidy all covers every project."}`, "info");
+			ctx.ui.notify(`Memory tidy in ${where}: ${total} suggestions (${summary}).${everywhere ? "" : " /memory-tidy all covers every project."}${compactHint}`, "info");
 
 			let deleted = 0;
 			let moved = 0;
 			let kept = 0;
 			let stopped = false;
-			const merges: string[] = [];
-			const shorten: number[] = [];
 			let n = 0;
 			for (const m of misfiled) {
 				if (!s.get(m.row.id)) continue;
@@ -645,67 +649,174 @@ export default function (pi: ExtensionAPI) {
 				if (!s.get(c.drop.id)) continue; // removed earlier in this pass
 				n++;
 				const body =
-					`${c.reason}\n\n${c.type === "extends" ? "Fold in" : c.type === "too-long" ? "Shorten" : "Delete"}:\n  ${formatRow(c.drop)}` +
+					`${c.reason}\n\n${c.type === "extends" ? "Fold in" : "Delete"}:\n  ${formatRow(c.drop)}` +
 					(c.keep ? `\n\nKeep:\n  ${formatRow(c.keep)}` : "");
-				const options =
-					c.type === "too-long"
-						? ["Ask agent to shorten", "Keep as is", "Stop"]
-						: [
-								...(c.keep && c.type !== "superseded" ? ["Ask agent to merge"] : []),
-								...(c.type === "extends" ? [] : ["Delete"]),
-								"Keep both",
-								"Stop",
-							];
-				const choice = await ctx.ui.select(`Memory tidy ${n}/${total} (${c.type})\n\n${body}`, options);
+				// Merging two memories needs new text, which only the model can write: that is /memory-compact.
+				const options = [...(c.type === "extends" ? [] : ["Delete"]), "Keep both", "Stop"];
+				const choice = await ctx.ui.select(`Memory tidy ${n}/${total} (${c.type})\n\n${body}${c.type === "extends" || c.type === "similar" ? "\n\n(/memory-compact can merge these with the model.)" : ""}`, options);
 				if (choice === undefined || choice === "Stop") break;
 				if (choice === "Delete" && s.forget(c.drop.id)) deleted++;
-				else if (choice === "Ask agent to merge") merges.push(`#${c.drop.id} into #${c.keep!.id}`);
-				else if (choice === "Ask agent to shorten") shorten.push(c.drop.id);
 				else kept++;
 			}
-			const sent = merges.length + shorten.length;
-			const done = [
-				moved ? `moved ${moved}` : "",
-				deleted ? `deleted ${deleted}` : "",
-				sent ? `${sent} sent to the agent to ${merges.length && shorten.length ? "merge or shorten" : merges.length ? "merge" : "shorten"}` : "",
-				kept ? `kept ${kept}` : "",
-			].filter(Boolean);
+			const done = [moved ? `moved ${moved}` : "", deleted ? `deleted ${deleted}` : "", kept ? `kept ${kept}` : ""].filter(Boolean);
 			ctx.ui.notify(`Memory tidy: ${done.length ? done.join(", ") : "no changes"}.`, "info");
-			if (moved) {
-				side.touched = side.touched.map((r) => s.get(r.id) ?? r);
+			if (moved || deleted) {
+				side.touched = side.touched.map((r) => s.get(r.id) ?? r).filter((r) => s.get(r.id));
 				sidebar?.refresh();
 			}
-			if (sent === 0) return;
-			// Rewritten text needs the model. Memories can be in a project other than this folder's, so
-			// say where each one is: without that the model cannot read or change them from here.
-			const homeOf = (id: number) => s.get(id)?.scope.replace(/^project:/, "") ?? "";
-			const folderProject = resolveProjectScope(ctx.cwd).replace(/^project:/, "");
-			const projectNote = (ids: number[]) => {
-				const out = new Map<string, number[]>();
-				for (const id of [...new Set(ids)]) {
-					const p = homeOf(id);
-					if (p && p !== folderProject && s.get(id)?.scope !== GLOBAL_SCOPE) out.set(p, [...(out.get(p) ?? []), id]);
+		},
+	});
+
+	/**
+	 * One request to a model outside the conversation, so memory text never enters the session. The
+	 * model is the one the person agreed to when asked, not whatever is selected later. A failed
+	 * request keeps its reason (a rate limit, a sign-in problem) instead of looking like silence.
+	 */
+	const askModel = (ctx: ExtensionContext, model: NonNullable<ExtensionContext["model"]>, signal: AbortSignal) => async (system: string, user: string): Promise<string | undefined> => {
+		const reply = await ctx.modelRegistry
+			.streamSimple(model, { systemPrompt: system, messages: [{ role: "user", content: user, timestamp: Date.now() }] }, { signal: AbortSignal.any([signal, AbortSignal.timeout(120_000)]) })
+			.result();
+		if (reply.stopReason === "error") throw new Error(reply.errorMessage || "the model returned an error");
+		if (reply.stopReason === "aborted") throw new Error(signal.aborted ? "cancelled" : "the request timed out");
+		return reply.content.flatMap((c) => (c.type === "text" ? [c.text] : [])).join("").trim() || undefined;
+	};
+
+	/** Memories /memory-compact already tried this session, so a second run reaches the ones it has not. */
+	const triedIds = new Set<number>();
+
+	pi.registerCommand("memory-compact", {
+		description: "Shorten long memories with the model, checked so nothing is lost (/memory-compact [ids | project name | all])",
+		handler: async (args, ctx) => {
+			if (!ctx.hasUI) return ctx.ui.notify("/memory-compact asks you to confirm, so it only runs in the interactive UI", "error");
+			const s = openStore();
+			const words = args.trim().split(/\s+/).filter(Boolean);
+			const ids = words.filter((w) => /^#?\d+$/.test(w)).map((w) => Number(w.replace("#", "")));
+			const rest = words.filter((w) => !/^#?\d+$/.test(w));
+			let rows: MemoryRow[];
+			let where: string;
+			try {
+				if (ids.length > 0) {
+					rows = s.getMany(ids);
+					where = ids.map((i) => `#${i}`).join(" ");
+					const missing = ids.filter((i) => !rows.some((r) => r.id === i));
+					if (missing.length) ctx.ui.notify(`No memory ${missing.map((i) => `#${i}`).join(", ")}`, "warning");
+				} else if (rest[0]?.toLowerCase() === "all") {
+					rows = s.inScopes(s.scopes());
+					where = "every project";
+				} else if (rest.length > 0) {
+					const scope = projectScope(ctx, rest.join(" "));
+					rows = s.inScopes([scope, GLOBAL_SCOPE]);
+					where = `${scope} and global`;
+				} else {
+					const scopes = resolveReadScopes(ctx.cwd);
+					rows = s.inScopes(scopes);
+					where = scopes.join(" and ");
 				}
-				return [...out].map(([p, list]) => `${list.map((i) => `#${i}`).join(", ")} ${list.length === 1 ? "is" : "are"} in the project "${p}" (pass project: "${p}" to memory_get and memory_forget, and in: "${p}" to memory_update)`).join("; ");
-			};
-			const asks: string[] = [];
-			if (merges.length) {
-				asks.push(
-					`Merge these memories: ${merges.join(", ")}. For each pair, use memory_update to rewrite the kept memory so it holds everything still true from both ` +
-						`(drop "Extends #N"/"Supersedes #N" wording), then delete the other with memory_forget.`,
-				);
+			} catch (err) {
+				return ctx.ui.notify(`/memory-compact: ${(err as Error).message}`, "error");
 			}
-			if (shorten.length) {
-				asks.push(
-					`Shorten memories ${shorten.map((id) => `#${id}`).join(", ")} (read them with memory_get). Keep what a later session needs, key point first, ` +
-						`under ${settings.recall.inlineChars} characters where possible; split unrelated points into new memories with memory_write. Use memory_update to rewrite.`,
-				);
+			const explicit = ids.length > 0;
+			if (rest.length > 0 && explicit) ctx.ui.notify(`/memory-compact: ignoring "${rest.join(" ")}" because ids were given`, "info");
+			// Without ids, "long" means over write.warnChars; at 0 (the check is off) nothing counts as long.
+			if (!explicit && settings.write.warnChars <= 0) return ctx.ui.notify("/memory-compact has no length to go by: write.warnChars is 0. Give it ids, or set write.warnChars.", "info");
+			// Summaries are not shortened (they are never recalled), whoever asks. Memories that hold a
+			// secret are not sent anywhere: a model provider would see it.
+			const named = explicit ? rows.filter((r) => r.kind === "summary") : [];
+			if (named.length) ctx.ui.notify(`Summaries are not shortened: ${named.map((r) => `#${r.id}`).join(", ")} skipped`, "info");
+			const withSecrets = rows.filter((r) => r.kind !== "summary" && findSecrets(r.text).length > 0);
+			if (withSecrets.length) ctx.ui.notify(`Not sent to the model, because they look like they hold a secret: ${withSecrets.map((r) => `#${r.id}`).join(", ")}. Remove the secret first.`, "warning");
+			const eligible = rows.filter((r) => !withSecrets.includes(r));
+			// Memories this command already looked at and could not shorten come last, so running it again
+			// reaches the ones it has not tried, not the same refused ones.
+			const tried = triedIds;
+			const ordered = [...eligible].sort((a, b) => Number(tried.has(a.id)) - Number(tried.has(b.id)));
+			const limit = explicit ? ordered.length : settings.compact.maxPerRun;
+			const longEnough = explicit ? 0 : settings.write.warnChars;
+			const all = pickLong(ordered, longEnough, Number.MAX_SAFE_INTEGER);
+			const fresh = all.filter((c) => !tried.has(c.row.id));
+			const picked = explicit ? all : [...fresh, ...all.filter((c) => tried.has(c.row.id))].slice(0, limit);
+			if (picked.length === 0) return ctx.ui.notify(`Nothing to shorten in ${where}: no memory is over ${settings.write.warnChars} characters.`, "info");
+			const more = explicit ? 0 : all.length - picked.length;
+			const est = estimate(picked);
+			const model = ctx.model;
+			if (!model) return ctx.ui.notify("/memory-compact needs a model: select one first", "error");
+			const modelName = `${model.provider}/${model.id}`;
+			const spread = [...new Set(picked.map((c) => c.row.scope))];
+			const ok = await ctx.ui.confirm(
+				`Shorten ${picked.length} ${picked.length === 1 ? "memory" : "memories"} in ${where}?`,
+				`This sends the text of ${picked.length === 1 ? "this memory" : `these ${picked.length} memories`} to ${modelName}, in ${picked.length} separate request${picked.length === 1 ? "" : "s"} of about ${compactChars(est.inputTokens)} tokens in all (${compactChars(est.outputTokens)} back). ` +
+					`It is not part of your conversation and nothing is saved until you have seen the results and confirmed.${spread.length > 1 ? ` The memories come from ${spread.length} projects (${spread.slice(0, 4).map((x) => x.replace(/^project:/, "")).join(", ")}${spread.length > 4 ? ", ..." : ""}), and all of them go to the same model.` : ""}` +
+					`${more > 0 ? ` ${more} more are over the limit; run it again for them.` : ""} A snapshot of the database is taken before anything is written, and Esc cancels.`,
+			);
+			if (!ok) return;
+
+			// Esc, or any key that cancels, stops the run; requests already finished are still shown.
+			const controller = new AbortController();
+			const stopListening = ctx.ui.onTerminalInput((data) => {
+				if (data === "\u001b") controller.abort();
+				return undefined;
+			});
+			ctx.ui.setStatus("memory-compact", `shortening 0/${picked.length} (Esc cancels)`);
+			let outcomes;
+			try {
+				outcomes = await proposeAll(askModel(ctx, model, controller.signal), picked, {
+					target: Math.min(300, settings.recall.inlineChars),
+					hardCap: Math.max(settings.recall.inlineChars + 100, 450),
+					concurrency: settings.compact.concurrency,
+					signal: controller.signal,
+					onProgress: (d, t) => ctx.ui.setStatus("memory-compact", `shortening ${d}/${t} (Esc cancels)`),
+				});
+			} finally {
+				stopListening();
+				ctx.ui.setStatus("memory-compact", undefined);
 			}
-			const elsewhere = projectNote([...shorten, ...merges.flatMap((m) => [...m.matchAll(/#(\d+)/g)].map((x) => Number(x[1])))]);
-			if (elsewhere) asks.push(`Note: ${elsewhere}.`);
-			const msg = `From /memory-tidy: ${asks.join(" ")} Show me the new text when done.`;
-			if (ctx.isIdle()) pi.sendUserMessage(msg);
-			else pi.sendUserMessage(msg, { deliverAs: "followUp" });
+			for (const o of outcomes) triedIds.add(o.row.id);
+			if (controller.signal.aborted) ctx.ui.notify(`Memory compact: cancelled after ${outcomes.length} of ${picked.length}`, "info");
+			if (outcomes.length === 0) return;
+			const good = outcomes.filter((o) => o.proposal && o.problems.length === 0);
+			const refused = outcomes.filter((o) => o.problems.length > 0);
+			const summary = `${good.length} ready, ${refused.length} refused or failed`;
+			const failures = [...new Set(outcomes.filter((o) => !o.proposal).map((o) => o.problems[0]))];
+			if (good.length === 0) {
+				await ctx.ui.select(`Memory compact: nothing can be applied (${summary})${failures.length ? `\nReasons: ${failures.join("; ")}` : ""}\n\n${outcomes.map(line).join("\n")}`, ["Close"]);
+				return;
+			}
+			const was = good.reduce((n, o) => n + o.row.text.length, 0);
+			const now = good.reduce((n, o) => n + o.proposal!.text.length, 0);
+			const added = good.reduce((n, o) => n + o.proposal!.splits.length, 0);
+			const apply1 = `Apply ${good.length}`;
+			// Every proposal can be read before anything is written: the model's text is untrusted, since
+			// the memory it was given may itself say anything. First the one-line summary of all of them,
+			// with the choice to read them one at a time.
+			const head = `Memory compact: ${summary}. Applying the ${good.length} ready ones takes ${compactChars(was)} characters to ${compactChars(now)} and adds ${added} new ${added === 1 ? "memory" : "memories"}.\n\n${outcomes.map(line).join("\n")}`;
+			let decision = await ctx.ui.select(head, [apply1, "Read each one first", "Cancel"]);
+			if (decision === "Read each one first") {
+				decision = undefined;
+				for (const [i, o] of good.entries()) {
+					const detail = `#${o.row.id} ${o.row.scope.replace(/^project:/, "")} (${i + 1}/${good.length})\n\nBEFORE (${o.row.text.length}c):\n${o.row.text}\n\nAFTER (${o.proposal!.text.length}c):\n${o.proposal!.text}${o.proposal!.splits.map((x) => `\n\nNEW (${x.kind ?? o.row.kind}, ${x.text.length}c):\n${x.text}`).join("")}`;
+					const last = i === good.length - 1;
+					const pick = await ctx.ui.select(detail, last ? [apply1, "Cancel"] : [`Next (${i + 2}/${good.length})`, apply1, "Cancel"]);
+					if (pick === apply1) { decision = apply1; break; }
+					if (pick === undefined || pick === "Cancel") break;
+				}
+			}
+			if (decision !== apply1) return;
+
+			// A snapshot first: a shortened memory cannot be undone memory by memory, but /memory-restore can undo the run.
+			let snapshot = "";
+			try {
+				snapshot = backupDb(location().path, backupDirFor(location()), new Date(), settings.backup.keep).to;
+			} catch (err) {
+				const go = await ctx.ui.confirm("The snapshot failed", `${(err as Error).message}\n\nShortening cannot be undone without one. Go on anyway?`);
+				if (!go) return;
+			}
+			const r = apply(s, good, ctx.sessionManager.getSessionId() ?? null);
+			side.touched = side.touched.map((x) => s.get(x.id) ?? x);
+			sidebar?.refresh();
+			ctx.ui.notify(
+				`Memory compact: shortened ${r.updated}, added ${r.added}${refused.length ? `, left ${refused.length} unchanged` : ""}${r.skipped.length ? `, skipped ${r.skipped.map((k) => `#${k.id} (${k.why})`).join(", ")}` : ""}.${snapshot ? ` Undo with /memory-restore ${snapshot.split("/").pop()}.` : ""}`,
+				"info",
+			);
 		},
 	});
 
