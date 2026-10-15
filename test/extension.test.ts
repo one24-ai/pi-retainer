@@ -297,7 +297,7 @@ test("without chassis: no widget, rows queued for chassis, the recall type marke
 	assert.ok(g[PLAIN].has("memory-recall"));
 });
 
-test("with chassis: the sidebar follows recall, this session's memories, resume and branch moves", async () => {
+test("with chassis: the sidebar follows recall, resume and branch moves", async () => {
 	seed([["A fact.", {}], ["Another.", { global: true }]]);
 	let spec: any;
 	let refreshed = 0;
@@ -314,16 +314,14 @@ test("with chassis: the sidebar follows recall, this session's memories, resume 
 	await f.prompt("hi");
 	assert.match(spec.render({}).text, /^2\/2 · /);
 	const w = await f.call("memory_write", { text: "Saved now.", kind: "decision" });
-	assert.ok(refreshed > 0);
-	assert.deepEqual(spec.detail({}), [`#${w.details.id} Saved now.`]);
+	assert.ok(w.details.id);
+	assert.equal(spec.detail, undefined, "the sidebar lists no memories");
 
 	await f.emit("session_start", { reason: "resume" });
-	assert.deepEqual(spec.detail({}), [`#${w.details.id} Saved now.`], "rebuilt from the session");
 	assert.match(spec.render({}).text, /^2\/2 · /, "recall numbers from the recall message");
 
 	f.sm.branch(root);
 	await f.emit("session_tree", { newLeafId: root, oldLeafId: null });
-	assert.deepEqual(spec.detail({}), [], "another branch has its own memories");
 	assert.equal(spec.render({}).text, "none yet", "nothing recalled on that branch yet");
 });
 
