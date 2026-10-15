@@ -70,33 +70,22 @@ test("markPlainMessage adds to chassis's shared set, creating it if needed", () 
 	assert.deepEqual([...existing], ["other", "memory-recall"]);
 });
 
-test("the sidebar registers only with chassis, and shows recall size and this session's memories", async () => {
-	const state: SidebarState = { recalled: 0, total: 0, chars: 0, budget: 4000, touched: [] };
-	assert.equal(registerSidebar({}, {}, () => state, () => {}, {}), undefined, "no chassis, no widget");
+test("the sidebar registers only with chassis, and shows only the recall size", () => {
+	const state: SidebarState = { recalled: 0, total: 0, chars: 0, budget: 4000 };
+	assert.equal(registerSidebar({}, {}, () => state, {}), undefined, "no chassis, no widget");
 
 	let spec: any;
 	let ctxGiven: unknown;
 	const g = { [REGISTRY]: { apiVersion: 1, register: (_pi: unknown, s: any, c: unknown) => ((spec = s), (ctxGiven = c), { refresh() {}, dispose() {} }) } };
 	const ctx = { hasUI: true };
-	assert.ok(registerSidebar({}, ctx, () => state, () => {}, g));
+	assert.ok(registerSidebar({}, ctx, () => state, g));
 	assert.equal(ctxGiven, ctx, "the session's ctx is passed so the widget starts at once");
 	assert.equal(spec.id, "pi-retainer");
 	assert.equal(spec.sidebar, "section");
 	assert.deepEqual(spec.render({}).text, "none yet");
 
-	const row = (id: number, text: string) => ({ id, text, scope: "g", kind: "fact", tags: [], pinned: false, createdAt: 0, updatedAt: id, sessionId: null }) as any;
-	Object.assign(state, { recalled: 12, total: 31, chars: 3812, touched: Array.from({ length: 10 }, (_, i) => row(i + 1, `memory ${i + 1}`)) });
+	Object.assign(state, { recalled: 12, total: 31, chars: 3812 });
 	assert.equal(spec.render({}).text, "12/31 · 3.8K/4.0K");
-	const lines = spec.detail({});
-	assert.equal(lines.length, 9);
-	assert.equal(lines[0], "#1 memory 1");
-	assert.equal(lines[8], "+2 more this session");
-
-	let shown: any;
-	const reg2 = { [REGISTRY]: { apiVersion: 1, register: (_p: unknown, s: any) => ((spec = s), { refresh() {}, dispose() {} }) } };
-	registerSidebar({}, ctx, () => state, (r) => void (shown = r), reg2);
-	await spec.onDetailClick(1, ctx);
-	assert.equal(shown.id, 2);
-	await spec.onDetailClick(50, ctx);
-	assert.equal(shown.id, 2, "a click past the list does nothing");
+	assert.equal(spec.detail, undefined, "no list of memories");
+	assert.equal(spec.onDetailClick, undefined);
 });

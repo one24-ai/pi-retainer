@@ -8,8 +8,7 @@
  *  - The recall row: "memory-recall" goes into chassis's shared set of message types that draw their
  *    own plain row, so chassis adds no panel around it.
  *  - A sidebar section, registered at session start only when chassis is there: how much was
- *    recalled against the budget, and the memories saved or changed in this session. Clicking one
- *    shows it in full.
+ *    recalled against the budget.
  *
  * Without chassis none of this runs and pi-retainer draws its own rows.
  *
@@ -20,8 +19,6 @@
  *   globalThis[Symbol.for("pi-halo/pendingToolRows")]: [{ specs, id, attach(remove) }]
  *   globalThis[Symbol.for("halo.plainMessageTypes")]: Set<string>
  */
-
-import type { MemoryRow } from "./store.ts";
 
 /** nf-md-brain, with a plain twin for terminals without a Nerd Font. */
 export const MEMORY_ICON = { nerd: "\u{F09D1}", plain: "#" };
@@ -166,11 +163,7 @@ export interface SidebarState {
 	total: number;
 	chars: number;
 	budget: number;
-	/** Memories saved or changed in this session, newest first. */
-	touched: MemoryRow[];
 }
-
-const MAX_TOUCHED_LINES = 8;
 
 /**
  * Register the sidebar section with chassis, if it is loaded. Call from session_start with its ctx.
@@ -180,7 +173,6 @@ export function registerSidebar(
 	pi: unknown,
 	ctx: unknown,
 	state: () => SidebarState,
-	show: (row: MemoryRow, ctx: any) => void | Promise<void>,
 	g: object = globalThis,
 ): { refresh(): void; dispose(): void } | undefined {
 	const reg = registry(g);
@@ -197,23 +189,12 @@ export function registerSidebar(
 			order: 60,
 			cacheKey: () => {
 				const s = state();
-				return `${s.recalled}|${s.total}|${s.chars}|${s.budget}|${s.touched.map((r) => `${r.id}:${r.updatedAt}`).join(",")}`;
+				return `${s.recalled}|${s.total}|${s.chars}|${s.budget}`;
 			},
 			render: () => {
 				const s = state();
-				if (s.total === 0 && s.touched.length === 0) return { text: "none yet", color: "muted" };
+				if (s.total === 0) return { text: "none yet", color: "muted" };
 				return { text: `${s.recalled}/${s.total} · ${k(s.chars)}/${k(s.budget)}`, color: "muted" };
-			},
-			detail: () => {
-				const s = state();
-				const rows = s.touched.slice(0, MAX_TOUCHED_LINES).map((r) => `#${r.id} ${oneLine(r.text, 60)}`);
-				if (s.touched.length > MAX_TOUCHED_LINES) rows.push(`+${s.touched.length - MAX_TOUCHED_LINES} more this session`);
-				return rows;
-			},
-			onDetailClick: async (index: number, c: unknown) => {
-				if (index >= MAX_TOUCHED_LINES) return; // the "+N more" line
-				const row = state().touched[index];
-				if (row) await show(row, c);
 			},
 		},
 		ctx,

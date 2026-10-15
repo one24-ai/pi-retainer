@@ -115,7 +115,7 @@ export default function (pi: ExtensionAPI) {
 	let where: DbLocation | undefined;
 	let settings: RecallSettings = DEFAULT_SETTINGS;
 	let sidebar: { refresh(): void; dispose(): void } | undefined;
-	const side: SidebarState = { recalled: 0, total: 0, chars: 0, budget: DEFAULT_SETTINGS.recall.maxChars, touched: [] };
+	const side: SidebarState = { recalled: 0, total: 0, chars: 0, budget: DEFAULT_SETTINGS.recall.maxChars };
 
 	const location = (): DbLocation => (where ??= resolveDb());
 	const openStore = (): MemoryStore => (store ??= new MemoryStore(location().path));
@@ -163,11 +163,6 @@ export default function (pi: ExtensionAPI) {
 	/** The optional project argument shared by the tools: a project that is not this folder's. */
 	const projectArg = () => Type.Optional(Type.String({ description: "Another project: name or directory" }));
 
-	function touch(row: MemoryRow) {
-		side.touched = [row, ...side.touched.filter((r) => r.id !== row.id)];
-		sidebar?.refresh();
-	}
-
 	// chassis (optional): its rows for the memory tools, and the recall row drawn without a panel.
 	offerToolRows();
 	markPlainMessage(RECALL_TYPE);
@@ -213,7 +208,6 @@ export default function (pi: ExtensionAPI) {
 				pinned: params.pinned,
 				sessionId: ctx.sessionManager.getSessionId() ?? null,
 			});
-			touch(result.row);
 			const lenNote = lengthNote(params.text, settings.write.warnChars, settings.recall.inlineChars);
 			// An exact repeat was refreshed, not added, so there is nothing to warn about.
 			const similar = result.deduplicated ? [] : existing.filter((x) => x.row.id !== result.row.id);
@@ -261,7 +255,6 @@ export default function (pi: ExtensionAPI) {
 				pinned: params.pinned,
 				scope: moveTo && moveTo !== row.scope ? moveTo : undefined,
 			})!;
-			touch(updated);
 			const moved = updated.scope !== row.scope ? `\nMoved from ${row.scope} to ${updated.scope}.` : "";
 			const lenNote = params.text ? lengthNote(params.text, settings.write.warnChars, settings.recall.inlineChars) : "";
 			const note = lenNote + moved;
@@ -296,8 +289,6 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 			openStore().forget(row.id);
-			side.touched = side.touched.filter((r) => r.id !== row.id);
-			sidebar?.refresh();
 			return { content: [{ type: "text", text: `Deleted memory #${row.id}.` }], details: { id: row.id, deleted: true } };
 		},
 	});
@@ -401,16 +392,6 @@ export default function (pi: ExtensionAPI) {
 		return undefined;
 	}
 
-	/** Memories saved or changed on this branch, newest first, that still exist. */
-	function touchedOnBranch(ctx: ExtensionContext): MemoryRow[] {
-		const ids: number[] = [];
-		for (const e of ctx.sessionManager.getBranch() as any[]) {
-			const m = e?.type === "message" ? e.message : undefined;
-			if (m?.role === "toolResult" && (m.toolName === "memory_write" || m.toolName === "memory_update") && typeof m.details?.id === "number") ids.push(m.details.id);
-		}
-		return openStore().getMany([...new Set(ids.reverse())]);
-	}
-
 	/** Bring the sidebar's numbers in line with the current context and branch. */
 	function syncSide(ctx: ExtensionContext) {
 		const prior = recallInContext(ctx);
@@ -419,7 +400,6 @@ export default function (pi: ExtensionAPI) {
 		side.total = prior?.total ?? prior?.count ?? 0;
 		side.chars = prior?.chars ?? 0;
 		side.budget = settings.recall.maxChars;
-		side.touched = touchedOnBranch(ctx);
 		sidebar?.refresh();
 	}
 
@@ -452,10 +432,7 @@ export default function (pi: ExtensionAPI) {
 		}
 		resetRecall();
 		sidebar?.dispose();
-		sidebar = registerSidebar(pi, ctx, () => side, async (row, c) => {
-			const fresh = openStore().get(row.id);
-			if (c?.hasUI) await c.ui.select(`Memory #${row.id}`, [fresh ? formatRow(fresh) : `#${row.id} was deleted`]);
-		});
+		sidebar = registerSidebar(pi, ctx, () => side);
 		syncSide(ctx);
 	});
 
@@ -568,8 +545,6 @@ export default function (pi: ExtensionAPI) {
 			if (!ctx.hasUI) return ctx.ui.notify("/memory-forget asks you to confirm, so it only runs in the interactive UI", "error");
 			if (!(await ctx.ui.confirm("Delete memory?", formatRow(row)))) return;
 			s.forget(id);
-			side.touched = side.touched.filter((r) => r.id !== id);
-			sidebar?.refresh();
 			ctx.ui.notify(`Deleted memory #${id}`, "info");
 		},
 	});
@@ -660,10 +635,6 @@ export default function (pi: ExtensionAPI) {
 			}
 			const done = [moved ? `moved ${moved}` : "", deleted ? `deleted ${deleted}` : "", kept ? `kept ${kept}` : ""].filter(Boolean);
 			ctx.ui.notify(`Memory tidy: ${done.length ? done.join(", ") : "no changes"}.`, "info");
-			if (moved || deleted) {
-				side.touched = side.touched.map((r) => s.get(r.id) ?? r).filter((r) => s.get(r.id));
-				sidebar?.refresh();
-			}
 		},
 	});
 
@@ -811,8 +782,6 @@ export default function (pi: ExtensionAPI) {
 				if (!go) return;
 			}
 			const r = apply(s, good, ctx.sessionManager.getSessionId() ?? null);
-			side.touched = side.touched.map((x) => s.get(x.id) ?? x);
-			sidebar?.refresh();
 			ctx.ui.notify(
 				`Memory compact: shortened ${r.updated}, added ${r.added}${refused.length ? `, left ${refused.length} unchanged` : ""}${r.skipped.length ? `, skipped ${r.skipped.map((k) => `#${k.id} (${k.why})`).join(", ")}` : ""}.${snapshot ? ` Undo with /memory-restore ${snapshot.split("/").pop()}.` : ""}`,
 				"info",

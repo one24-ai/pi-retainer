@@ -134,7 +134,7 @@ pi-retainer works the same with or without [pi-chassis](https://github.com/one24
 
 - the memory tools are drawn as pi-chassis's one-line rows (`󰧑 Remember fact Use pnpm…   #12 saved`),
 - the recall message is one plain row (`󰧑 Recall session memories   17 of 32 memories`), expanding to the index,
-- a Memory section in the sidebar shows the recall size (`17/32 · 3.8K/4.0K`: memories listed of those that could be, characters used of the budget) and the memories saved or changed in this session; click one to read it.
+- a Memory section in the sidebar shows the recall size (`17/32 · 3.8K/4.0K`: memories listed of those that could be, characters used of the budget).
 
 Without pi-chassis, pi-retainer draws its own compact tool rows and a boxed recall message, and shows no sidebar. The pairing goes through the documented globals pi-chassis leaves on `globalThis` (see `extensions/retainer/chassis.ts`), so the two can be installed, updated and removed separately.
 

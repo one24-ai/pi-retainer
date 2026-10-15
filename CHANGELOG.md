@@ -4,6 +4,10 @@ All notable changes to pi-retainer (called pi-domain until 0.4.0) are listed her
 
 ## [Unreleased]
 
+### Changed
+
+- **Behaviour change:** the pi-chassis sidebar section shows only the recall summary (`17/32 · 3.8K/4.0K`). It no longer lists the memories saved or changed in the session, and clicking no longer opens one.
+
 ## [0.6.0]
 
 ### Added
