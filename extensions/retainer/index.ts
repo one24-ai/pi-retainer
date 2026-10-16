@@ -174,11 +174,13 @@ export default function (pi: ExtensionAPI) {
 		label: "Remember",
 		...writeRenderers("Remember"),
 		description:
-			"Save a memory that persists across sessions: a decision, preference, fact or gotcha. " +
-			"Project scope by default; global for facts that hold everywhere. Pinned memories are always recalled.",
-		promptSnippet: "memory_write: save a decision, preference, fact or gotcha for later sessions",
+			"Save a memory for later sessions: a decision, fact or gotcha. " +
+			"Project scope by default; global for facts that hold everywhere.",
+		promptSnippet: "memory_write: save a gotcha or decision for later sessions",
 		promptGuidelines: [
-			"Save memories for durable decisions, preferences and gotchas, not task progress. One point per memory, key point first, readable out of context.",
+			"Save only what no file or command would tell a later session: a gotcha with its cause, a decision with its reason. Not progress, versions or anything readable from code. " +
+				"Standing rules for how the user works go in their AGENTS.md: propose that edit instead. " +
+				"Search first; memory_update rather than add near-duplicates.",
 			"If a memory is about another project than this folder's, set project.",
 		],
 		parameters: Type.Object({

@@ -6,6 +6,8 @@ All notable changes to pi-retainer (called pi-domain until 0.4.0) are listed her
 
 ### Changed
 
+- `memory_write` guidance is stricter, to stop over-saving. The tool now tells the model to save only what no file or command would reveal (a gotcha with its cause, a decision with its reason), not progress, versions or things readable from code; to propose an edit to the user's instruction file (such as AGENTS.md) for standing rules instead of saving them; and to search first and use `memory_update` rather than add near-duplicates. The `preference` and `fact` kinds are no longer named in the tool text, though both are still accepted. The tool text stays under the existing size ceiling.
+
 - **Behaviour change:** the pi-chassis sidebar section shows only the recall summary (`17/32 · 3.8K/4.0K`). It no longer lists the memories saved or changed in the session, and clicking no longer opens one.
 
 ## [0.6.0]
