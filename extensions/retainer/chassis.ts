@@ -12,8 +12,8 @@
  *
  * Without chassis none of this runs and pi-retainer draws its own rows.
  *
- * The protocol (pi-chassis's README, "Adding a widget without depending on pi-chassis" and "Tool rows
- * for your extension's tools"):
+ * The protocol (pi-chassis's docs/widgets.md, "Adding a widget without depending on pi-chassis", and
+ * docs/tool-rows.md, "Tool rows for your extension's tools"):
  *   globalThis[Symbol.for("pi-halo/registry")]: { apiVersion, register(pi, spec, ctx?),
  *     toolRowsVersion, registerToolRows(specs, { id }) }
  *   globalThis[Symbol.for("pi-halo/pendingToolRows")]: [{ specs, id, attach(remove) }]
