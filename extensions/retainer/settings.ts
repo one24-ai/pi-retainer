@@ -1,0 +1,166 @@
+/**
+ * pi-retainer settings, read from pi-retainer.json in pi's agent directory (~/.pi/agent unless pi
+ * is told otherwise). Every key is optional; a missing file, a malformed file
+ * or a value of the wrong type falls back to the default, so a typo never stops pi from starting.
+ *
+ *   {
+ *     "recall":    { "maxChars": 4000, "maxItems": 20, "globalShare": 0.5, "inlineChars": 300 },
+ *     "write":     { "warnChars": 600, "checkSecrets": true, "similarity": 0.5 },
+ *     "summaries": { "save": false, "maxChars": 4000, "keep": 3 },
+ *     "compact":   { "maxPerRun": 25, "concurrency": 3 },
+ *     "backup":    { "everyHours": 24, "keep": 20 },
+ *     "tools":     { "exposure": "direct" }
+ *   }
+ *
+ * Free of pi imports so it can be tested on its own.
+ */
+
+import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+export interface RecallSettings {
+	recall: {
+		/** Characters of memories loaded at session start, header and footer included. */
+		maxChars: number;
+		/** Memories listed at session start, at most. */
+		maxItems: number;
+		/** Share of maxChars that global memories may use, 0 to 1; the rest is kept for the project. */
+		globalShare: number;
+		/** A memory up to this long is listed whole; a longer one by its first sentence. */
+		inlineChars: number;
+	};
+	write: {
+		/**
+		 * memory_write and memory_update answer with a note above this many characters, and
+		 * /memory-tidy suggests shortening such memories. Recall shortens anything over
+		 * recall.inlineChars regardless.
+		 */
+		warnChars: number;
+		/** Refuse to save text that looks like it holds a secret (a key, token or password). */
+		checkSecrets: boolean;
+		/** memory_write notes an existing memory when the new one shares at least this share of its words. 0 turns it off. */
+		similarity: number;
+	};
+	summaries: {
+		/**
+		 * Save each compaction summary as a "summary" memory (searchable, never recalled). Off by
+		 * default: pi keeps every summary in the session file already, and a stored copy is a cut-down
+		 * snapshot of one moment that goes stale; durable points belong in memory_write.
+		 */
+		save: boolean;
+		maxChars: number;
+		/** /memory-tidy suggests deleting summaries beyond the newest this many per project. */
+		keep: number;
+	};
+	compact: {
+		/** /memory-compact shortens at most this many memories in one run. */
+		maxPerRun: number;
+		/** Requests to the model run this many at a time. */
+		concurrency: number;
+	};
+	backup: {
+		/** Hours between automatic snapshots at session start; 0 turns them off. */
+		everyHours: number;
+		/** Snapshots kept; older ones are removed after a new one succeeds. */
+		keep: number;
+	};
+	tools: {
+		/**
+		 * How the model reaches the memory tools (pi's tool exposure): "direct" declares them,
+		 * "codemode" lists them in the codemode tool, "deferred" leaves them out until tool_search or a
+		 * codemode script looks them up. A change needs a restart: /reload keeps active tools declared.
+		 */
+		exposure: ToolsExposure;
+	};
+}
+
+export const TOOLS_EXPOSURES = ["direct", "codemode", "deferred"] as const;
+export type ToolsExposure = (typeof TOOLS_EXPOSURES)[number];
+
+export const DEFAULT_SETTINGS: RecallSettings = {
+	recall: { maxChars: 4000, maxItems: 20, globalShare: 0.5, inlineChars: 300 },
+	write: { warnChars: 600, checkSecrets: true, similarity: 0.5 },
+	summaries: { save: false, maxChars: 4000, keep: 3 },
+	compact: { maxPerRun: 25, concurrency: 3 },
+	backup: { everyHours: 24, keep: 20 },
+	tools: { exposure: "direct" },
+};
+
+/** pi-retainer.json in pi's agent directory (pass pi's getAgentDir()). */
+export function settingsPath(agentDir: string = join(homedir(), ".pi", "agent")): string {
+	return join(agentDir, "pi-retainer.json");
+}
+
+type Bounds = { min: number; max: number; int?: boolean };
+
+function num(v: unknown, fallback: number, b: Bounds): number {
+	if (typeof v !== "number" || !Number.isFinite(v)) return fallback;
+	const n = b.int ? Math.round(v) : v;
+	return Math.min(b.max, Math.max(b.min, n));
+}
+
+const obj = (v: unknown): Record<string, unknown> => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {});
+
+/** Settings from parsed JSON, each value checked and clamped; anything unusable takes the default. */
+export function parseSettings(raw: unknown): RecallSettings {
+	const d = DEFAULT_SETTINGS;
+	const r = obj(obj(raw).recall);
+	const w = obj(obj(raw).write);
+	const s = obj(obj(raw).summaries);
+	const b = obj(obj(raw).backup);
+	const c = obj(obj(raw).compact);
+	const t = obj(obj(raw).tools);
+	return {
+		recall: {
+			// Below about 500 the header and footer leave no room; 0 turns recall off.
+			maxChars: r.maxChars === 0 ? 0 : num(r.maxChars, d.recall.maxChars, { min: 500, max: 100_000, int: true }),
+			maxItems: num(r.maxItems, d.recall.maxItems, { min: 0, max: 200, int: true }),
+			globalShare: num(r.globalShare, d.recall.globalShare, { min: 0, max: 1 }),
+			inlineChars: num(r.inlineChars, d.recall.inlineChars, { min: 60, max: 10_000, int: true }),
+		},
+		write: {
+			warnChars: num(w.warnChars, d.write.warnChars, { min: 0, max: 100_000, int: true }),
+			checkSecrets: typeof w.checkSecrets === "boolean" ? w.checkSecrets : d.write.checkSecrets,
+			similarity: w.similarity === 0 ? 0 : num(w.similarity, d.write.similarity, { min: 0.2, max: 1 }),
+		},
+		summaries: {
+			save: typeof s.save === "boolean" ? s.save : d.summaries.save,
+			maxChars: num(s.maxChars, d.summaries.maxChars, { min: 200, max: 100_000, int: true }),
+			keep: num(s.keep, d.summaries.keep, { min: 0, max: 1000, int: true }),
+		},
+		compact: {
+			maxPerRun: num(c.maxPerRun, d.compact.maxPerRun, { min: 1, max: 200, int: true }),
+			concurrency: num(c.concurrency, d.compact.concurrency, { min: 1, max: 8, int: true }),
+		},
+		backup: {
+			everyHours: num(b.everyHours, d.backup.everyHours, { min: 0, max: 24 * 365 }),
+			keep: num(b.keep, d.backup.keep, { min: 1, max: 1000, int: true }),
+		},
+		tools: {
+			exposure: (TOOLS_EXPOSURES as readonly unknown[]).includes(t.exposure) ? (t.exposure as ToolsExposure) : d.tools.exposure,
+		},
+	};
+}
+
+export interface LoadedSettings {
+	settings: RecallSettings;
+	path: string;
+	/** Set when the file exists but could not be read or parsed. */
+	error?: string;
+}
+
+export function loadSettings(path: string = settingsPath()): LoadedSettings {
+	let text: string;
+	try {
+		text = readFileSync(path, "utf8");
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code === "ENOENT") return { settings: DEFAULT_SETTINGS, path };
+		return { settings: DEFAULT_SETTINGS, path, error: (err as Error).message };
+	}
+	try {
+		return { settings: parseSettings(JSON.parse(text)), path };
+	} catch (err) {
+		return { settings: DEFAULT_SETTINGS, path, error: `not valid JSON: ${(err as Error).message}` };
+	}
+}
