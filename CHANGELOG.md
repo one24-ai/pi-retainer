@@ -4,6 +4,8 @@ All notable changes to pi-retainer (published under an earlier name before 0.4.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-23
+
 ### Removed
 
 - **Breaking:** the database location, settings file, environment variables and snapshot names of the package's earlier name are no longer read or migrated, so data that was never moved is not found. Move it to the current location first: the database to `$XDG_DATA_HOME/pi-retainer/retainer.db` (else `~/.local/share/pi-retainer/retainer.db`), settings to `pi-retainer.json` in pi's agent directory, snapshots to `backups/` beside the database as `retainer-YYYYMMDD-HHMMSS.db`, and use `PI_RETAINER_DB` and `PI_RETAINER_REPOS`. The compatibility package for the old name is no longer published.
@@ -104,4 +106,5 @@ First public release.
 - Settings in the settings file.
 - Optional pi-chassis pairing: tool rows, a plain recall row and a sidebar section, through its globals only.
 
-[Unreleased]: https://github.com/one24-ai/pi-retainer/commits/main
+[Unreleased]: https://github.com/one24-ai/pi-retainer/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/one24-ai/pi-retainer/releases/tag/v0.8.0
